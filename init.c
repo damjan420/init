@@ -13,7 +13,9 @@
 #include <netinet/in.h>
 #include <sys/random.h>
 #include <sys/wait.h>
-
+#include <signal.h>
+#include <stdbool.h>
+#include <sys/reboot.h>
 
 int quick_mount(const char* src, const char* dest, const char* fs, uint64_t flags) {
   if(access(dest, F_OK) == -1) {
@@ -77,6 +79,50 @@ int check_seed_entropy() {
   return 0;
 }
 
+volatile sig_atomic_t shell_dead = true;
+pid_t shell_pid = -1;
+
+void handle_sigchld() {
+  pid_t p;
+  while((p = waitpid(-1, NULL, WNOHANG)) > 0) {
+    if(p == shell_pid) {
+      shell_dead = true;
+    }
+    fprintf(stdout, "[ INFO ] reaped process: %d", p);
+  }
+}
+
+void prepare_poweroff() {
+  kill(-1, SIGTERM);
+  sleep(2);
+  kill(-1, SIGKILL);
+
+  sync();
+
+  umount("/dev");
+  umount("/sys");
+  umount("/proc");
+
+  mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL);
+
+}
+
+void handler(int sig) {
+  switch (sig) {
+      case SIGCHLD:
+        handle_sigchld();
+        break;
+       case SIGUSR1:
+         prepare_poweroff();
+         reboot(RB_POWER_OFF);
+         break;
+       case SIGUSR2:
+         prepare_poweroff();
+         reboot(RB_AUTOBOOT);
+         break;
+    }
+}
+
 int main() {
   pid_t pid = getpid();
   if(pid != 1) return 1;
@@ -119,21 +165,36 @@ int main() {
   if(check_seed_entropy() == -1) {
      fprintf(stdout, "[ FAIL ] System random generator is DOWN: %s\n", strerror(errno));
   } else {
-     fprintf(stdout, "[ FAIL ] System random generator is UP\n");
+     fprintf(stdout, "[ OK ] System random generator is UP\n");
   }
+
+  struct sigaction sa;
+  sa.sa_handler = handler;
+  sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+
+  sigaction(SIGCHLD, &sa, NULL);
+  sigaction(SIGUSR1, &sa, NULL);
+  sigaction(SIGUSR2, &sa, NULL);
 
 
   while(1){
-    pid = fork();
-    if(pid == 0) {
-      char *args[] = { "/bin/getty", "115200", "ttyS0", NULL };
+    if(shell_dead == true) {
+      shell_dead = false;
 
-      execv(args[0], args);
+      pid = fork();
+      shell_pid = pid;
 
-      fprintf(stderr, "[ FAIL ] execv getty failed: %s\n", strerror(errno));
-      _exit(1);
+      if(pid == 0) {
+        char *args[] = { "/bin/sh",  NULL };
+
+        execv(args[0], args);
+
+        fprintf(stderr, "[ FAIL ] execv sh failed: %s\n", strerror(errno));
+        _exit(1);
+      }
     }
-    int status;
-    waitpid(pid, &status, 0);
+
+    pause();
+
   }
 }
