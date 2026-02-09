@@ -3,10 +3,31 @@
 #include <errno.h>
 #include <string.h>
 #include <wait.h>
+#include <sys/mount.h>
 
 void phase_one() {
   pid_t pid = getpid();
   if(pid != 1) return;
+
+
+  if(mount(NULL, "/", NULL, MS_REMOUNT, NULL) == -1) {
+    fprintf(stderr, "[ FAIL ] Mount rootfs as read-write: %s\n", strerror(errno));
+  } else fprintf(stdout, "[ OK ] Mount rootfs as read-write\n");
+
+  if(mount("proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == -1) {
+     fprintf(stderr, "[ FAIL ] Mount /proc: %s\n", strerror(errno));
+  }
+  else fprintf(stdout, "[ OK ] Mount proc\n");
+
+  if(mount("sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == -1){
+     fprintf(stderr, "[ FAIL ] Mount /sys: %s\n", strerror(errno));
+  } else  fprintf(stdout, "[ OK ] Mount /sys\n");
+
+  if(mount("devtmpfs", "/dev", "devtmpfs", MS_NOSUID, NULL) == -1) {
+     fprintf(stderr, "[ FAIL ] Mount /dev: %s\n", strerror(errno));
+  } else fprintf(stdout, "[ OK ] Mount /dev\n");
+
+
 
   pid = fork();
 

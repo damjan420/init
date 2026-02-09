@@ -29,6 +29,6 @@ int main() {
   };
 
   close(soc);
-  fprintf(stderr, "[ FAIL ] Loopback interface 'lo' is UP\n");
+  fprintf(stderr, "[ OK ] Loopback interface 'lo' is UP\n");
   return 0;
 }

@@ -1,22 +1,15 @@
-#include <stdlib.h>
-#include <stdint.h>
-#include <sys/mount.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <stdio.h>
 #include <errno.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <linux/if.h>
-#include <netinet/in.h>
-#include <sys/random.h>
-#include <sys/wait.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/mount.h>
+#include <sys/random.h>
 #include <sys/reboot.h>
-
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "phase.h"
 
 volatile sig_atomic_t shell_dead = true;
@@ -32,10 +25,18 @@ void handle_sigchld() {
   }
 }
 
+
 void prepare_poweroff() {
   kill(-1, SIGTERM);
   sleep(2);
   kill(-1, SIGKILL);
+
+  char next_seed[512];
+  getrandom(&next_seed, 512, 0);
+
+  int seed_fd = open("/var/lib/seed", O_WRONLY);
+  write(seed_fd, &next_seed, 512);
+  close(seed_fd);
 
   sync();
 
