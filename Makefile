@@ -4,12 +4,20 @@ BINARY = rootfs/init
 CPID_FILE = rootfs/initramfs.cpio
 KERNEL = /boot/vmlinuz-$(shell uname -r)
 ROOTFS = rootfs
+CORE_SERVICES = rootfs/bin/init.d/core_services
 
-all: $(CPID_FILE)
+all: $(CORE_SERVICES) $(CPID_FILE)
+
+$(CORE_SERVICES):
+	mkdir -p $(CORE_SERVICES)
+	$(CC) $(CFLAGS)  src/mount_pfs.c -o $(CORE_SERVICES)/mount_pfs
+	$(CC) $(CFLAGS)  src/up_lo.c -o $(CORE_SERVICES)/up_lo
+	$(CC) $(CFLAGS)  src/set_hostname.c -o $(CORE_SERVICES)/set_hostname
+	$(CC) $(CFLAGS)  src/seed_entropy.c -o $(CORE_SERVICES)/seed_entropy
 
 # 1. Compile only the init code
-$(BINARY): init.c
-	$(CC) $(CFLAGS) init.c -o $(BINARY)
+$(BINARY): src/init.c
+	$(CC) $(CFLAGS) src/phase_one.c src/init.c -o $(BINARY)
 
 # 2. Pack the archive using the rootfs directory
 $(CPID_FILE): $(BINARY)
@@ -26,6 +34,6 @@ run: $(CPID_FILE)
 		-nographic
 
 clean:
-	rm -f $(BINARY) $(CPID_FILE)
+	rm -rf $(BINARY) $(CPID_FILE) $(CORE_SERVICES)
 
 .PHONY: all run clean
