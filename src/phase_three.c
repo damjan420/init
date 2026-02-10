@@ -6,17 +6,41 @@
 #include <sys/mount.h>
 #include <sys/random.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <ctype.h>
+#include <sys/wait.h>
 
+int count_processes() {
+    int count = 0;
+    DIR *dir = opendir("/proc");
+    if (!dir) return -1;
 
-void prepare_poweroff() {
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        if (isdigit(entry->d_name[0])) {
+            count++;
+        }
+    }
+    closedir(dir);
+    return count;
+}
+
+void phase_three() {
 
   fprintf(stdout, "[ INFO ] Sending SIGTERM to all processes\n");
   kill(-1, SIGTERM);
 
   fprintf(stdout, "[ INFO ] Starting grace period\n");
-  sleep(2);
 
-  fprintf(stdout, "[ INFO ] Sending SIGKILL to all processes");
+
+  for(int timeout = 30; timeout > 0; timeout--){
+    while(waitpid(-1, NULL, WNOHANG) > 0);
+
+    if(count_processes() <= 1) break;
+    usleep(1000 * 100);
+  }
+
+  fprintf(stdout, "[ INFO ] Sending SIGKILL to all processes\n");
   kill(-1, SIGKILL);
 
   char next_seed[512];

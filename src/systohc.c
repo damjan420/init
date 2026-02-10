@@ -27,7 +27,7 @@ int main() {
 
     if( ioctl(rtc_fd, RTC_SET_TIME, &rtc) < 0){
       fprintf(stderr, "[ FAIL ] Sync hardware clock to the system time: %s\n", strerror(errno));
-    } else fprintf(stderr, "[ OK ] Sync hardware clock to the system time");
+    } else fprintf(stderr, "[ OK ] Sync hardware clock to the system time\n");
 
     close(rtc_fd);
 }

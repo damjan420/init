@@ -14,10 +14,12 @@ $(CORE_SERVICES):
 	$(CC) $(CFLAGS)  src/up_lo.c -o $(CORE_SERVICES)/up_lo
 	$(CC) $(CFLAGS)  src/set_hostname.c -o $(CORE_SERVICES)/set_hostname
 	$(CC) $(CFLAGS)  src/seed_entropy.c -o $(CORE_SERVICES)/seed_entropy
+	$(CC) $(CFLAGS)  src/systohc.c -o $(CORE_SERVICES)/systohc
+	$(CC) $(CFLAGS)  src/loadkeys_setfont.c -o $(CORE_SERVICES)/loadkeys_setfont
 
 # 1. Compile only the init code
 $(BINARY): src/init.c
-	$(CC) $(CFLAGS) src/phase_one.c src/init.c -o $(BINARY)
+	$(CC) $(CFLAGS) src/phase_one.c src/phase_three.c src/init.c -o $(BINARY)
 
 # 2. Pack the archive using the rootfs directory
 $(CPID_FILE): $(BINARY)
