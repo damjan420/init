@@ -70,14 +70,16 @@ service* parse_service(int sv_fd, const char* fname) {
 }
 
 
-service* get_enabled_sv(){
+service* sv_head = NULL;
+
+
+void get_enabled_sv(){
   DIR* initd_dp = opendir("/etc/init.d/");
-  if(initd_dp == NULL) return NULL;
+  if(initd_dp == NULL) return;
 
   const struct dirent* entry;
 
-  service* head = calloc(1, sizeof(service));
-  bool head_set = false;
+
 
   while((entry = readdir(initd_dp)) != NULL) {
     const char* name = entry->d_name;
@@ -94,18 +96,16 @@ service* get_enabled_sv(){
       }
 
 
-      if(head_set == false) {
-        head = sv;
-        head_set = true;
+      if(sv_head == NULL) {
+        sv_head = sv;
       }
       else {
-        sv->next = head;
-        head = sv;
+        sv->next = sv_head;
+        sv_head = sv;
       }
       close(sv_fd);
     }
-  }
-  return head;
+  };
 }
 
 void execv_line(char* line) {
@@ -127,19 +127,33 @@ void execv_line(char* line) {
   execv(args[0], args);
 }
 
-void execute_enabled(service* head) {
-  service* current = head;
+void exec_sv(service* sv) {
+  if(sv == NULL) return;
+  pid_t pid = fork();
+  if(pid == 0) {
+    fprintf(stdout, "[ INFO ] Executing %s\n", sv->exec);
+    execv_line(sv->exec);
+    fprintf(stderr, "[ FAIL ] Executing %s: %s\n", sv->exec, strerror(errno));
+    _exit(-1);
+  }
+}
+
+void exec_enabled() {
+  service* current = sv_head;
   while(current) {
-    pid_t pid = fork();
-    if(pid == 0) {
-      fprintf(stdout, "[ INFO ] Executing %s\n", current->exec);
-      execv_line(current->exec);
-      fprintf(stderr, "[ FAIL ] Executing %s: %s\n", current->exec, strerror(errno));
-      _exit(-1);
-    }
-    current->pid = pid;
+    exec_sv(current);
     current = current->next;
   }
+}
+
+
+service* get_sv_by_pid(pid_t pid) {
+  service* current = sv_head;
+  while(current) {
+    if(current->pid == pid) return current;
+    current = current->next;
+  }
+  return NULL;
 }
 
 volatile sig_atomic_t shell_dead = true;
@@ -148,7 +162,12 @@ pid_t shell_pid = -1;
 void handle_sigchld() {
   pid_t p;
   int save_errno = errno;
+
   while((p = waitpid(-1, NULL, WNOHANG)) > 0) {
+    service* sv = get_sv_by_pid(p);
+    if (sv !=  NULL) {
+      exec_sv(sv);
+    }
     if(p == shell_pid) {
       shell_dead = true;
     }
@@ -186,9 +205,9 @@ int main() {
   sigaction(SIGUSR1, &sa, NULL);
   sigaction(SIGUSR2, &sa, NULL);
 
- service* head =  get_enabled_sv();
 
- execute_enabled(head);
+ get_enabled_sv();
+ exec_enabled();
   //TODO: make starting enabled services more robust, implement a ctl
 
   while(1){
