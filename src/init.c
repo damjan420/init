@@ -17,12 +17,14 @@ pid_t shell_pid = -1;
 
 void handle_sigchld() {
   pid_t p;
+  int save_errno = errno;
   while((p = waitpid(-1, NULL, WNOHANG)) > 0) {
     if(p == shell_pid) {
       shell_dead = true;
     }
     fprintf(stdout, "[ INFO ] reaped process: %d", p);
   }
+  errno = save_errno;
 }
 
 
