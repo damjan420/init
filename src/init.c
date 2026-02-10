@@ -26,39 +26,17 @@ void handle_sigchld() {
 }
 
 
-void prepare_poweroff() {
-  kill(-1, SIGTERM);
-  sleep(2);
-  kill(-1, SIGKILL);
-
-  char next_seed[512];
-  getrandom(&next_seed, 512, 0);
-
-  int seed_fd = open("/var/lib/seed", O_WRONLY);
-  write(seed_fd, &next_seed, 512);
-  close(seed_fd);
-
-  sync();
-
-  umount("/dev");
-  umount("/sys");
-  umount("/proc");
-
-  mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL);
-
-}
-
 void handler(int sig) {
   switch (sig) {
       case SIGCHLD:
         handle_sigchld();
         break;
        case SIGUSR1:
-         prepare_poweroff();
+         phase_three();
          reboot(RB_POWER_OFF);
          break;
        case SIGUSR2:
-         prepare_poweroff();
+         phase_three();
          reboot(RB_AUTOBOOT);
          break;
     }
@@ -76,6 +54,7 @@ int main() {
   sigaction(SIGUSR1, &sa, NULL);
   sigaction(SIGUSR2, &sa, NULL);
 
+  //TODO: start enabled services, implement a ctl
 
   while(1){
     if(shell_dead == true) {
@@ -89,7 +68,7 @@ int main() {
 
         execv(args[0], args);
 
-        fprintf(stderr, "[ FAIL ] execv sh failed: %s\n", strerror(errno));
+        fprintf(stderr, "[ FAIL ] execv sh failed: %s\n", strerror(errno)); // TODO: start getty
         _exit(1);
       }
     }

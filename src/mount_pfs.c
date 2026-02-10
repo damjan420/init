@@ -39,6 +39,11 @@ int main() {
     fprintf(stderr, "[ FAIL ] Mount /run: %s\n", strerror(errno));
   } else fprintf(stderr, "[ OK ] Mount /run\n");
 
+  if(quick_mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV) == -1) {
+    fprintf(stderr, "[ FAIL ] Mount /tmp: %s\n", strerror(errno));
+  } else fprintf(stderr, "[ OK ] Mount /tmp\n");
+
+
   if(quick_mount("cgroup2", "/sys/fs/cgroup", "cgroup2", MS_NOSUID | MS_NOEXEC | MS_NODEV) == -1) {
     fprintf(stderr, "[ FAIL ] Mount /sys/fs/cgroup: %s\n", strerror(errno));
   } else fprintf(stderr, "[ OK ] Mount /sys/fs/cgroup\n");

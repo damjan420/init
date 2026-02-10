@@ -27,7 +27,7 @@ void phase_one() {
      fprintf(stderr, "[ FAIL ] Mount /dev: %s\n", strerror(errno));
   } else fprintf(stdout, "[ OK ] Mount /dev\n");
 
-
+  fprintf(stdout, "[ INFO ] Starting parallel boot\n");
 
   pid = fork();
 
@@ -54,13 +54,29 @@ void phase_one() {
     _exit(-1);
   }
 
-
   pid = fork();
-  if(pid == 0) { ///bin/init.d/core_services
+  if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/seed_entropy",  NULL };
     execv(args[0], args);
     fprintf(stderr, "[ FAIL ] Could not launch core service seed_entropy: %s\n", strerror(errno));
     _exit(-1);
   }
+
+  pid = fork();
+  if(pid == 0) {
+    char *args[] = { "/bin/init.d/core_services/systohc",  NULL };
+    execv(args[0], args);
+    fprintf(stderr, "[ FAIL ] Could not launch core service systohc: %s\n", strerror(errno));
+    _exit(-1);
+  }
+
+  pid = fork();
+  if(pid == 0) {
+    char *args[] = { "/bin/init.d/core_services/loadkeys_setfont",  NULL };
+    execv(args[0], args);
+    fprintf(stderr, "[ FAIL ] Could not launch core service loadkeys: %s\n", strerror(errno));
+    _exit(-1);
+  }
+
   while (wait(NULL) > 0);
 }
