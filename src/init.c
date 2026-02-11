@@ -34,7 +34,7 @@ service* parse_service(int sv_fd, const char* fname) {
 
   size_t len;
   char* line = NULL;
-  for(int ln=0;getline(&line, &len, sv_fp) > 0; ln++) {
+  for(int ln=0; getline(&line, &len, sv_fp) > 0; ln++) {
 
      line[strcspn(line, "\r\n")] = '\0';
      if(strncmp(line, "#", 1) == 0 || strncmp(line, "\0", 1) == 0) continue;
@@ -43,7 +43,7 @@ service* parse_service(int sv_fd, const char* fname) {
 
      char* eq = strchr(line, '=');
      if(eq == NULL) {
-       printf("[ INFO ] Line %d in /etc/init.d/%s missing an equal characther '='. skipping line\n", ln, fname);
+       fprintf(stdout, "[ INFO ] Line %d in /etc/init.d/%s missing an equal characther '='. skipping line\n", ln, fname);
        continue;
      };
 
@@ -56,19 +56,33 @@ service* parse_service(int sv_fd, const char* fname) {
        sv->exec = strdup(val);
 
      }
+     else if(strcmp(key, "restart") == 0) {
+       if(strcmp(val, "always") == 0) sv->restart = ALWAYS;
+       else if(strcmp(val, "never") == 0) sv->restart = NEVER;
+       else if(strcmp(val, "on-failure") == 0) sv->restart = ON_FAILURE;
+       else {
+         fprintf(stdout, "[ INFO ] Unknow restart option %s at line %d in %s\n. Assuming restart=never", val, ln, fname);
+         sv->restart = NEVER;
+       }
 
-  };
+     }
+     else {
+       fprintf(stdout, "[ INFO ] Unknow key at line %d in %s. Skipping line\n", ln, key);
+     }
+  }
   fclose(sv_fp);
   if(line) free(line);
+
   else{
     free(sv);
     return NULL;
   }
+  sv->restart_count =  0;
   if(sv->exec == NULL) return NULL;
 
   return sv;
-}
 
+}
 
 service* sv_head = NULL;
 
@@ -136,6 +150,7 @@ void exec_sv(service* sv) {
     fprintf(stderr, "[ FAIL ] Executing %s: %s\n", sv->exec, strerror(errno));
     _exit(-1);
   }
+  sv->pid = pid;
 }
 
 void exec_enabled() {
@@ -156,22 +171,44 @@ service* get_sv_by_pid(pid_t pid) {
   return NULL;
 }
 
+ int sys_state = RUNNING;
+
+void restart_sv(service* sv, int status) {
+    if(sys_state == SHUTDOWN) return;
+
+    if(sv == NULL) return;
+
+    if(sv->restart == NEVER) return;
+
+    else if(sv->restart_count > 5) return; // TODO: better restart storm prevention
+
+    else if(sv->restart == ALWAYS) {
+      sv->restart_count++;
+      exec_sv(sv);
+    }
+
+    else if(sv->restart == ON_FAILURE) {
+      if((WIFEXITED(status) && WEXITSTATUS(status) != 0 ) || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM)) {
+         sv->restart_count++;
+        exec_sv(sv);
+      }
+    }
+
+  }
+
 volatile sig_atomic_t shell_dead = true;
 pid_t shell_pid = -1;
 
 void handle_sigchld() {
-  pid_t p;
+  pid_t pid;
   int save_errno = errno;
-
-  while((p = waitpid(-1, NULL, WNOHANG)) > 0) {
-    service* sv = get_sv_by_pid(p);
-    if (sv !=  NULL) {
-      exec_sv(sv);
-    }
-    if(p == shell_pid) {
+  int status;
+  while((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+    restart_sv(get_sv_by_pid(pid), status); // restart_sv checks sv-> restart and status
+    if(pid == shell_pid) {
       shell_dead = true;
     }
-    fprintf(stdout, "[ INFO ] reaped process: %d", p);
+    fprintf(stdout, "[ INFO ] reaped process: %d\n", pid);
   }
   errno = save_errno;
 }
@@ -206,8 +243,8 @@ int main() {
   sigaction(SIGUSR2, &sa, NULL);
 
 
- get_enabled_sv();
- exec_enabled();
+  get_enabled_sv();
+  exec_enabled();
   //TODO: make starting enabled services more robust, implement a ctl
 
   while(1){

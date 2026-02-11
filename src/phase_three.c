@@ -9,13 +9,14 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <sys/wait.h>
+#include "init.h"
 
 int count_processes() {
     int count = 0;
     DIR *dir = opendir("/proc");
     if (!dir) return -1;
 
-    struct dirent *entry;
+    const struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (isdigit(entry->d_name[0])) {
             count++;
@@ -27,8 +28,14 @@ int count_processes() {
 
 void phase_three() {
 
-  fprintf(stdout, "[ INFO ] Sending SIGTERM to all processes\n");
-  kill(-1, SIGTERM);
+  sys_state = SHUTDOWN;
+  fprintf(stdout, "[ INFO ] Sending SIGTERM to all services\n");
+
+  service* current = sv_head;
+  while(current) {
+    kill(current->pid, SIGTERM);
+      current = current->next;
+  }
 
   fprintf(stdout, "[ INFO ] Starting grace period\n");
 
