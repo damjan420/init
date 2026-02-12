@@ -9,7 +9,9 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <sys/wait.h>
-#include "init.h"
+#include <sys/reboot.h>
+
+#include "sv.h"
 
 int count_processes() {
     int count = 0;
@@ -26,7 +28,7 @@ int count_processes() {
     return count;
 }
 
-void phase_three() {
+void phase_three(int power_action) {
 
   sys_state = SHUTDOWN;
   fprintf(stdout, "[ INFO ] Sending SIGTERM to all services\n");
@@ -94,5 +96,12 @@ void phase_three() {
   if(mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL) < 0) {
     fprintf(stderr, "[ FAIL ] Mount rootfs as read-only: %s\n", strerror(errno));
   } else fprintf(stderr, "[ OK ] Mount rootfs as read-only\n");
+
+  if(power_action == 1) {
+    reboot(RB_POWER_OFF);
+  }
+  else if(power_action == 2) {
+    reboot(RB_AUTOBOOT);
+  }
 
 }
