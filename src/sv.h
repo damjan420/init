@@ -1,6 +1,7 @@
 #include <sys/types.h>
 
 #define MAX_RESTARTS 5
+#define STABLE_TRESHOLD 60
 
 enum {
   SV_RS_ALWAYS =1,
@@ -26,7 +27,7 @@ typedef struct service {
   int state;
   int restart;
   int restart_count;
-  time_t started;
+  time_t start;
   time_t next_restart;
   struct service* next;
   struct service* prev;
@@ -41,3 +42,4 @@ void sv_restart();
 void sv_schedule_restart(service* sv, int status);
 struct timespec* sv_get_next_restart();
 service* sv_find_by_pid(pid_t pid);
+void sv_update_stable();

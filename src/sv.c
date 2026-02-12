@@ -163,6 +163,7 @@ void sv_exec(service* sv) {
   }
   sv->pid = pid;
   sv->state = SV_UP;
+  sv->start = time(NULL);
 }
 
 void sv_exec_enabled() {
@@ -230,7 +231,7 @@ struct timespec* sv_get_next_restart() {
   if(ts == NULL) return NULL;
 
   while(current) {
-    if(current->state == SV_RESTART_PENDING || current->next_restart != 0) {
+    if(current->state == SV_RESTART_PENDING) {
 
       ts->tv_sec = current->next_restart - now;
 
@@ -240,4 +241,17 @@ struct timespec* sv_get_next_restart() {
   }
 
   return NULL;
+}
+
+void sv_update_stable() { // if restart_count = 0 service is stable
+  service* current = sv_head;
+  time_t now = time(NULL);
+
+  while(current) {
+    if(now - current->start >= 60) {
+      current->restart_count = 0;
+      current->next_restart = 0;
+    }
+    current = current->next;
+  }
 }

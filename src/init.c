@@ -58,7 +58,7 @@ int main() {
 
   sv_parse_enabled();
   sv_exec_enabled();
-  //TODO: make starting enabled services more robust, implement a ctl
+  //TODO:  implement a ctl
 
   while(1){
 
@@ -84,6 +84,8 @@ int main() {
 
     struct timespec* timeout = sv_get_next_restart();
     int ret = ppoll(fds, 1, timeout, NULL);
+
+    sv_update_stable();
 
     if( (ret > 0) && (fds[0].events & POLLIN)) {
       struct signalfd_siginfo fdsi;
