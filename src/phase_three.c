@@ -30,7 +30,7 @@ int count_processes() {
 
 void phase_three(int power_action) {
 
-  sys_state = SHUTDOWN;
+  sys_state = SYS_SHUTDOWN;
   fprintf(stdout, "[ INFO ] Sending SIGTERM to all services\n");
 
   service* current = sv_head;

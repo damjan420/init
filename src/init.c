@@ -45,14 +45,6 @@ int main() {
 
   phase_one();
 
-  /* struct sigaction sa; */
-  /* sa.sa_handler = handler; */
-  /* sa.sa_flags = SA_NOCLDSTOP; */
-
-  /* sigaction(SIGCHLD, &sa, NULL); */
-  /* sigaction(SIGUSR1, &sa, NULL); */
-  /* sigaction(SIGUSR2, &sa, NULL); */
-
   sigset_t mask;
   sigemptyset(&mask);
 

@@ -3,19 +3,19 @@
 #define MAX_RESTARTS 5
 
 enum {
-  ALWAYS,
-  ON_FAILURE,
-  NEVER
+  SV_RS_ALWAYS =1,
+  SV_RS_ON_FAILURE,
+  SV_RS_NEVER
 };
 
 enum {
-  RUNNING,
-  SHUTDOWN,
+  SYS_RUNNING = 0,
+  SYS_SHUTDOWN,
 };
 enum {
-  UP,
-  FAILED,
-  RESTART_PENDING,
+  SV_UP,
+  SV_FAILED,
+  SV_RESTART_PENDING,
 };
 
 

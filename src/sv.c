@@ -12,7 +12,7 @@
 #include "sv.h"
 
 service* sv_head = NULL;
-int sys_state = RUNNING;
+int sys_state = SYS_RUNNING;
 
 char* trim(char* str) {
   while(isspace((unsigned char)*str))str++;
@@ -43,6 +43,14 @@ void execv_line(char* line) {
   execv(args[0], args);
 }
 
+char* sv_parse_name(const char* fname) {
+  size_t flen = strlen(fname);
+  char* name = strdup(fname);
+  if(name == NULL) return NULL;
+  name[(flen - 3)] = '\0';
+  return name;
+}
+
 service* sv_parse(int sv_fd, const char* fname) {
 
   FILE* sv_fp = fdopen(sv_fd, "r");
@@ -61,7 +69,7 @@ service* sv_parse(int sv_fd, const char* fname) {
 
      char* eq = strchr(line, '=');
      if(eq == NULL) {
-       fprintf(stdout, "[ INFO ] Line %d in /etc/init.d/%s missing an equal characther '='. skipping line\n", ln, fname);
+       fprintf(stdout, "[ INFO ] Line %d in service file %s missing an equal characther '='. skipping line\n", ln, fname);
        continue;
      };
 
@@ -75,17 +83,17 @@ service* sv_parse(int sv_fd, const char* fname) {
 
      }
      else if(strcmp(key, "restart") == 0) {
-       if(strcmp(val, "always") == 0) sv->restart = ALWAYS;
-       else if(strcmp(val, "never") == 0) sv->restart = NEVER;
-       else if(strcmp(val, "on-failure") == 0) sv->restart = ON_FAILURE;
+       if(strcmp(val, "always") == 0) sv->restart = SV_RS_ALWAYS;
+       else if(strcmp(val, "never") == 0) sv->restart = SV_RS_NEVER;
+       else if(strcmp(val, "on-failure") == 0) sv->restart = SV_RS_ON_FAILURE;
        else {
-         fprintf(stdout, "[ INFO ] Unknow restart option %s at line %d in %s\n. Assuming restart=never", val, ln, fname);
-         sv->restart = NEVER;
+         fprintf(stdout, "[ INFO ] Unknow restart option %s at line %d in service file %s. Assuming restart=never\n", val, ln, fname);
+         sv->restart = SV_RS_NEVER;
        }
 
      }
      else {
-       fprintf(stdout, "[ INFO ] Unknow key at line %d in %s. Skipping line\n", ln, key);
+       fprintf(stdout, "[ INFO ] Unknow key at line %d in service file %s. Skipping line\n", ln, key);
      }
   }
   fclose(sv_fp);
@@ -95,11 +103,19 @@ service* sv_parse(int sv_fd, const char* fname) {
     free(sv);
     return NULL;
   }
-  sv->restart_count =  0;
-  if(sv->exec == NULL) return NULL;
+
+  if(sv->exec == NULL) {
+    fprintf(stderr, "[ FAIL ] Service file %s missing an exec field\n", fname);
+    return NULL;
+  }
+
+  if(sv->restart == 0) {
+    fprintf(stderr, "[ FAIL ] Service file %s missing a restart field\n ", fname);
+  }
+
+  sv->name = sv_parse_name(fname);
 
   return sv;
-
 }
 
 
@@ -109,8 +125,6 @@ void sv_parse_enabled(){
 
   const struct dirent* entry;
 
-
-
   while((entry = readdir(initd_dp)) != NULL) {
     const char* name = entry->d_name;
     size_t nlen = strlen(entry->d_name);
@@ -118,7 +132,7 @@ void sv_parse_enabled(){
     if(strncmp(&(name[nlen-1]), "s", 1) && strncmp(&(name[nlen -1]), "v", 1) == 0 && entry->d_type == DT_REG) {
 
       int sv_fd = openat(dirfd(initd_dp), name, O_RDONLY);
-      if(sv_fd == -1) fprintf(stderr, "[FAIL] Open file at /etc/init.d/%s: %s\n", name, strerror(errno));
+      if(sv_fd == -1) fprintf(stderr, "[ FAIL ] Open file at /etc/init.d/%s: %s\n", name, strerror(errno));
 
       service* sv = sv_parse(sv_fd, name);
       if(sv == NULL) {
@@ -142,13 +156,13 @@ void sv_exec(service* sv) {
   if(sv == NULL) return;
   pid_t pid = fork();
   if(pid == 0) {
-    fprintf(stdout, "[ INFO ] Executing %s\n", sv->exec);
+    fprintf(stdout, "[ INFO ] Executing service %s\n", sv->name);
     execv_line(sv->exec);
-    fprintf(stderr, "[ FAIL ] Executing %s: %s\n", sv->exec, strerror(errno));
+    fprintf(stderr, "[ FAIL ] Executing service %s: %s\n", sv->name, strerror(errno));
     _exit(-1);
   }
   sv->pid = pid;
-  sv->state = UP;
+  sv->state = SV_UP;
 }
 
 void sv_exec_enabled() {
@@ -171,9 +185,9 @@ service* sv_find_by_pid(pid_t pid) {
 
 void sv_restart(time_t now) {
   service* current = sv_head;
-  fprintf(stdout, "[ INFO ] Restarting services with state == RESTART_PENDING\n");
+
   while(current) {
-    if(current->state == RESTART_PENDING && current->next_restart >= now){
+    if(current->state == SV_RESTART_PENDING && current->next_restart >= now){
       current->restart_count++;
       sv_exec(current);
 
@@ -183,34 +197,26 @@ void sv_restart(time_t now) {
 }
 
 void sv_schedule_restart(service* sv, int status) {
-   if(sys_state == SHUTDOWN) return;
+   if(sys_state == SYS_SHUTDOWN) return;
    if(sv == NULL) return;
-   if(sv->restart == NEVER) return;
+   if(sv->restart == SV_RS_NEVER) return;
 
   if(sv->restart_count >= MAX_RESTARTS) {
-    sv->state = FAILED;
+    fprintf(stdout, "[ INFO ] Service %s crashed 5 times in 25 seconds. Marking as FAILED\n", sv->name);
+    sv->state = SV_FAILED;
     sv->next_restart = 0;
     return;
   }
 
 
+    else if( (sv->restart == SV_RS_ALWAYS) || ( (sv->restart == SV_RS_ON_FAILURE) && ( (WIFEXITED(status) && WEXITSTATUS(status) != 0 ) || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM) ) ) ){
 
-    else if(sv->restart == ALWAYS) {
-      fprintf(stdout, "[ INFO ] SCHEDULING RESTART\n");
+      fprintf(stdout, "[ INFO ] Service %s crashed. Next restart in 5 seconds\n", sv->name);
       time_t now = time(NULL);
-      sv->state = RESTART_PENDING;
+      sv->state = SV_RESTART_PENDING;
       sv->next_restart = now + 5;
       sv->restart_count++;
-    }
 
-    else if(sv->restart == ON_FAILURE) {
-      if((WIFEXITED(status) && WEXITSTATUS(status) != 0 ) || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM)) {
-        fprintf(stdout, "[ INFO ] SCHEDULING RESTART\n");
-        time_t now = time(NULL);
-        sv->state = RESTART_PENDING;
-        sv->next_restart = now + 5;
-        sv->restart_count++;
-      }
     }
 
 
@@ -224,10 +230,10 @@ struct timespec* sv_get_next_restart() {
   if(ts == NULL) return NULL;
 
   while(current) {
-    if(current->state == RESTART_PENDING || current->next_restart != 0) {
+    if(current->state == SV_RESTART_PENDING || current->next_restart != 0) {
 
       ts->tv_sec = current->next_restart - now;
-      fprintf(stdout, "[ INFO ] Next restart in %lu\n", ts->tv_sec);
+
       return ts;
     }
     current = current -> next;
