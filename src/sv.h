@@ -1,5 +1,9 @@
 #include <sys/types.h>
 
+#define SV_ENABLED_DIR "/etc/init.d/en"
+#define SV_AVALIVABLE_DIR "/etc/init.d/av"
+
+
 #define MAX_RESTARTS 5
 #define STABLE_TRESHOLD 60
 
@@ -17,6 +21,7 @@ enum {
   SV_UP,
   SV_FAILED,
   SV_RESTART_PENDING,
+  SV_STOPPED,
 };
 
 
@@ -43,3 +48,7 @@ void sv_schedule_restart(service* sv, int status);
 struct timespec* sv_get_next_restart();
 service* sv_find_by_pid(pid_t pid);
 void sv_update_stable();
+int  sv_enable(const char* sv_name, uid_t euid);
+int sv_disable(const char* sv_name, uid_t euid);
+int sv_start(const char* sv_name, uid_t euid);
+int sv_stop(const char* sv_name, uid_t euid);

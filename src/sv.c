@@ -9,7 +9,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <time.h>
+
 #include "sv.h"
+#include "ctl.h"
 
 service* sv_head = NULL;
 int sys_state = SYS_RUNNING;
@@ -43,18 +45,14 @@ void execv_line(char* line) {
   execv(args[0], args);
 }
 
-char* sv_parse_name(const char* fname) {
-  size_t flen = strlen(fname);
-  char* name = strdup(fname);
-  if(name == NULL) return NULL;
-  name[(flen - 3)] = '\0';
-  return name;
-}
 
-service* sv_parse(int sv_fd, const char* fname) {
+service* sv_parse(const char* sv_path, const char* fname) {
 
-  FILE* sv_fp = fdopen(sv_fd, "r");
-  if(sv_fp == NULL) return NULL;
+  FILE* sv_fp = fopen(sv_path, "r");
+  if(sv_fp == NULL) {
+    fprintf(stderr, "[ FAIL ] Unable to open service file %s: %s\n", sv_path, strerror(errno));
+    return NULL;
+  };
 
   service* sv = calloc(1, sizeof(service));
 
@@ -113,30 +111,56 @@ service* sv_parse(int sv_fd, const char* fname) {
     fprintf(stderr, "[ FAIL ] Service file %s missing a restart field\n ", fname);
   }
 
-  sv->name = sv_parse_name(fname);
+  sv->name = strdup(fname);
 
   return sv;
 }
 
+char* sv_conc_av_path(const char* sv_name) {
+  size_t av_path_len = strlen(SV_AVALIVABLE_DIR) + strlen(sv_name) + 6;
+  char* sv_av_path = malloc(av_path_len);
+
+  if(sv_av_path == NULL) return NULL;
+  snprintf(sv_av_path, av_path_len, "%s/%s.sv", SV_AVALIVABLE_DIR , sv_name);
+
+  return sv_av_path;
+}
+
+char* sv_conc_en_path(const char* sv_name) {
+  size_t en_path_len = strlen(SV_ENABLED_DIR) + strlen(sv_name) + 6;
+  char* sv_en_path = malloc(en_path_len);
+
+  if(sv_en_path == NULL) return NULL;
+  snprintf(sv_en_path, en_path_len, "%s/%s.sv", SV_ENABLED_DIR , sv_name);
+
+  return sv_en_path;
+}
+
 
 void sv_parse_enabled(){
-  DIR* initd_dp = opendir("/etc/init.d/");
-  if(initd_dp == NULL) return;
+  DIR* enabled_dp = opendir(SV_ENABLED_DIR);
+  if(enabled_dp == NULL) {
+    fprintf(stderr, "Unable to open dir %s: %s\n", SV_ENABLED_DIR, strerror(errno));
+    return;
 
+  }
+  
   const struct dirent* entry;
 
-  while((entry = readdir(initd_dp)) != NULL) {
-    const char* name = entry->d_name;
+  while((entry = readdir(enabled_dp)) != NULL) {
+    char* name = (char*)entry->d_name;
+
     size_t nlen = strlen(entry->d_name);
 
-    if(strncmp(&(name[nlen-1]), "s", 1) && strncmp(&(name[nlen -1]), "v", 1) == 0 && entry->d_type == DT_REG) {
+    if(strncmp(&(name[nlen -2]), "s", 1) == 0 && strncmp(&(name[nlen -1]), "v", 1) == 0 && (entry->d_type == DT_REG || entry->d_type == DT_LNK)) {
 
-      int sv_fd = openat(dirfd(initd_dp), name, O_RDONLY);
-      if(sv_fd == -1) fprintf(stderr, "[ FAIL ] Open file at /etc/init.d/%s: %s\n", name, strerror(errno));
+      name[nlen - 3] = '\0';
 
-      service* sv = sv_parse(sv_fd, name);
+      char * sv_en_path  = sv_conc_en_path(name);
+      service* sv = sv_parse(sv_en_path, name);
+      free(sv_en_path);
       if(sv == NULL) {
-        fprintf(stderr, "[ FAIL ] Unable to parse file etc/init.d/%s\n", name);
+        fprintf(stderr, "[ FAIL ] Unable to parse file %s/%s\n", SV_ENABLED_DIR, name);
       }
 
 
@@ -147,7 +171,6 @@ void sv_parse_enabled(){
         sv->next = sv_head;
         sv_head = sv;
       }
-      close(sv_fd);
     }
   };
 }
@@ -184,7 +207,8 @@ service* sv_find_by_pid(pid_t pid) {
 }
 
 
-void sv_restart(time_t now) {
+void sv_restart() {
+  time_t now = time(NULL);
   service* current = sv_head;
 
   while(current) {
@@ -209,8 +233,9 @@ void sv_schedule_restart(service* sv, int status) {
     return;
   }
 
-
-    else if( (sv->restart == SV_RS_ALWAYS) || ( (sv->restart == SV_RS_ON_FAILURE) && ( (WIFEXITED(status) && WEXITSTATUS(status) != 0 ) || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM) ) ) ){
+  else if ( (sv->restart == SV_RS_ALWAYS) ||
+          ( (sv->restart == SV_RS_ON_FAILURE) && ( (WIFEXITED(status) && WEXITSTATUS(status) != 0 )
+          || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM) ) ) ){
 
       fprintf(stdout, "[ INFO ] Service %s crashed. Next restart in 5 seconds\n", sv->name);
       time_t now = time(NULL);
@@ -254,4 +279,73 @@ void sv_update_stable() { // if restart_count = 0 service is stable
     }
     current = current->next;
   }
+}
+
+
+int  sv_enable(const char* sv_name, uid_t euid) {
+
+
+  if(euid != 0) return ERR_PERM;
+
+  char* sv_av_path = sv_conc_av_path(sv_name);
+
+  if(sv_av_path == NULL) return ERR_NO_MEM;
+
+  if(access(sv_av_path, F_OK) != 0) {
+    return ERR_NOT_AV;
+  }
+
+  char* sv_en_path = sv_conc_en_path(sv_name);
+  if(sv_en_path == NULL) return ERR_NO_MEM;
+
+  if(access(sv_en_path, F_OK) == 0) {
+    return ERR_ALR_EN;
+  }
+  fprintf(stdout, "%s, %s\n", sv_av_path, sv_en_path);
+  symlink(sv_av_path, sv_en_path);
+
+  free(sv_av_path);
+  free(sv_en_path);
+  return ERR_OK;
+}
+
+int sv_disable(const char* sv_name, uid_t euid) {
+
+  if(euid != 0) return ERR_PERM;
+  char* sv_en_path = sv_conc_en_path(sv_name);
+  if(sv_en_path == NULL) return ERR_NO_MEM;
+
+  if(access(sv_en_path, F_OK) != 0) {
+    return ERR_NOT_EN;
+
+  }
+  remove(sv_en_path);
+  free(sv_en_path);
+  return ERR_OK;
+}
+
+int sv_start(const char* sv_name, uid_t euid) {
+  if(euid != 0) return ERR_PERM;
+  char* sv_av_path = sv_conc_av_path(sv_name);
+  if(access(sv_av_path, F_OK) != 0) return ERR_NOT_AV;
+  service* sv = sv_parse(sv_av_path, sv_name);
+  sv->next = sv_head;
+  sv_head = sv;
+  sv_exec(sv);
+  return ERR_OK;
+}
+
+
+int sv_stop(const char* sv_name, uid_t euid) {
+  if(euid != 0) return ERR_PERM;
+  service* current = sv_head;
+  while(current) {
+    if(strcmp(current->name, sv_name) == 0 && current->state != SV_FAILED) {
+      current->state = SV_STOPPED;
+      kill(current->pid, SIGTERM);
+      return ERR_OK;
+    }
+    current = current-> next;
+  }
+  return ERR_NOT_AV;
 }

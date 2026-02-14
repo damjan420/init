@@ -2,8 +2,9 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
-#include <wait.h>
+#include <sys/wait.h>
 #include <sys/mount.h>
+#include <sys/types.h>
 
 void emergency_shell() {
   fprintf(stderr, "[ INFO ] Dropping emergency shell\n");
@@ -31,7 +32,7 @@ void phase_one() {
      fprintf(stderr, "[ FAIL ] Mount /proc: %s\n", strerror(errno));
      emergency_shell();
   }
-  else fprintf(stdout, "[ OK ] Mount proc\n");
+  else fprintf(stdout, "[ OK ] Mount /proc\n");
 
   if(mount("sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == -1){
      fprintf(stderr, "[ FAIL ] Mount /sys: %s\n", strerror(errno));

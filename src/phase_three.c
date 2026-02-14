@@ -35,8 +35,11 @@ void phase_three(int power_action) {
 
   service* current = sv_head;
   while(current) {
-    kill(current->pid, SIGTERM);
+    if(current->state == SV_UP) {
+      current->state = SV_STOPPED;
+      kill(current->pid, SIGTERM);
       current = current->next;
+    }
   }
 
   fprintf(stdout, "[ INFO ] Starting grace period\n");
@@ -71,6 +74,10 @@ void phase_three(int power_action) {
 
  //dev/pts /dev/shm /run /sys/fs/cgroup
 
+  if(umount("/run") < 0) {
+    fprintf(stderr, "[ FAIL ] Unmount /run: %s\n", strerror(errno));
+  } else  fprintf(stderr, "[ OK ] Unmount /run\n");
+
   if(umount("/dev/pts") < 0) {
     fprintf(stderr, "[ FAIL ] Unmount /dev/pts: %s\n", strerror(errno));
   } else  fprintf(stderr, "[ OK ] Unmount /dev/pts\n");
@@ -87,6 +94,10 @@ void phase_three(int power_action) {
   if(umount("/sys/fs/cgroup") < 0) {
     fprintf(stderr, "[ FAIL ] Unmount /sys/fs/cgroup: %s\n", strerror(errno));
   } else  fprintf(stderr, "[ OK ] Unmount /sys/fs/cgroup\n");
+
+  if(umount("/sys") < 0) {
+    fprintf(stderr, "[ FAIL ] Unmount /sys: %s\n", strerror(errno));
+  } else  fprintf(stderr, "[ OK ] Unmount /sys");
 
   if(umount("/proc") < 0) {
     fprintf(stderr, "[ FAIL ] Unmount /proc: %s\n", strerror(errno));
