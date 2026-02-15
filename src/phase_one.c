@@ -48,7 +48,7 @@ void phase_one() {
   set_loglevel(INFO +1);
 
   if(n == 4) {
-    klog(OK, "mounted rootfs as read-write");
+    klog(OK, "mounted rootfs as read-write\n");
     klog(OK, "mounted pseudo filesystems /proc, /sys and dev");
   }
 

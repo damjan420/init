@@ -13,6 +13,7 @@
 #include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <stdlib.h>
 
 #include "klog.h"
 #include "ctl.h"
@@ -37,12 +38,13 @@ void handle_sigchld() {
 }
 
 
-int handle_ctl_payload(ctl_payload* payload) {
-  switch (payload->action) {
-  case A_ENABLE:  return sv_enable(payload->sv_name, payload->euid);
-  case A_DISABLE: return sv_disable(payload->sv_name, payload->euid);
-  case A_START:   return sv_start(payload->sv_name, payload->euid);
-  case A_STOP:    return sv_stop(payload->sv_name, payload->euid);
+int handle_ctl_payload(int action, char* sv_name, uid_t euid) {
+  switch (action) {
+  case A_ENABLE:  return sv_enable(sv_name, euid);
+  case A_DISABLE: return sv_disable(sv_name, euid);
+  case A_START:   return sv_start(sv_name, euid);
+  case A_STOP:    return sv_stop(sv_name, euid);
+  case A_STATE:  return sv_state(sv_name, euid);
   default:        return ERR_UNSUPORTED;
   }
 }
@@ -125,10 +127,18 @@ int main() {
       fflush(stdout);
       int cfd = accept(lfd, NULL, NULL);
 
+      char buf[512];
+
       ctl_payload payload ;
-      read(cfd, &payload, sizeof(ctl_payload));
-      fprintf(stdout, "action: %d, sv: %s\n", payload.action, payload.sv_name);
-      int err = handle_ctl_payload(&payload);
+      read(cfd, buf, sizeof(buf));
+
+      memcpy(&payload, buf, sizeof(payload));
+      char* sv_name = malloc(payload.sv_name_len);
+      if(sv_name == NULL) continue;
+      memcpy(sv_name, buf + sizeof(payload), payload.sv_name_len);
+
+      fprintf(stdout, "action: %d, sv: %s\n", payload.action, sv_name);
+      int err = handle_ctl_payload(payload.action, sv_name, payload.euid);
       write(cfd, &err, sizeof(int));
       close(cfd);
 

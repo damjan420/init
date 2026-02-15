@@ -16,18 +16,17 @@ void klog(int loglevel, const char* format, ...) {
   va_start(args, format);
 
   char buf[256];
-
-  int n = vsnprintf(buf, sizeof(buf), format, args);
+  int offset = snprintf(buf, sizeof(buf), "<%d>init: ", loglevel);
+  int msg = vsnprintf(buf + offset, sizeof(buf) - offset, format, args);
+  snprintf(buf + offset + msg, 2, "\n");
   va_end(args);
-  if(n < 0) return;
 
-  char final[256];
-  int m = snprintf(final, sizeof(final), "<%d>init: %s\n", loglevel, buf);
-  if(m < 0) return;
+  if(offset < 0 || msg < 0) return;
+
 
   int kmesg_fd = open("/dev/kmsg", O_WRONLY);
   if(kmesg_fd < 0) return;
 
-  write(kmesg_fd, final, sizeof(final));
+  write(kmesg_fd, buf, sizeof(buf));
   close(kmesg_fd);
 }

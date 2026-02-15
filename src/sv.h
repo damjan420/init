@@ -48,7 +48,9 @@ void sv_schedule_restart(service* sv, int status);
 struct timespec* sv_get_next_restart();
 service* sv_find_by_pid(pid_t pid);
 void sv_update_stable();
+
 int  sv_enable(const char* sv_name, uid_t euid);
 int sv_disable(const char* sv_name, uid_t euid);
 int sv_start(const char* sv_name, uid_t euid);
 int sv_stop(const char* sv_name, uid_t euid);
+int sv_state(const char* sv_name, uid_t euid);

@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <time.h>
+#include <stdbool.h>
 
 #include "klog.h"
 #include "sv.h"
@@ -325,28 +326,68 @@ int sv_disable(const char* sv_name, uid_t euid) {
   return ERR_OK;
 }
 
+service* sv_get_if_up(const char* sv_name) { // treats SV_RESTART_PENDING as up
+  service* current = sv_head;
+  while(current) {
+    if(strcmp(current->name, sv_name) == 0 &&
+    (current->state == SV_UP || current->state == SV_RESTART_PENDING))
+      return current;
+    current = current->next;
+  }
+  return NULL;
+}
+
 int sv_start(const char* sv_name, uid_t euid) {
   if(euid != 0) return ERR_PERM;
+
   char* sv_av_path = sv_conc_av_path(sv_name);
   if(access(sv_av_path, F_OK) != 0) return ERR_NOT_AV;
+
   service* sv = sv_parse(sv_av_path, sv_name);
+
+  if(sv == NULL) return ERR_CANT_PARSE;
+
+  if(sv_get_if_up(sv_name) != NULL) return ERR_ALR_UP;
+
   sv->next = sv_head;
   sv_head = sv;
   sv_exec(sv);
+
   return ERR_OK;
 }
 
 
+
 int sv_stop(const char* sv_name, uid_t euid) {
   if(euid != 0) return ERR_PERM;
+  service* sv = sv_get_if_up(sv_name);
+  if(sv != NULL) {
+    kill(sv->pid, SIGTERM);
+    sv->state = SV_STOPPED;
+    return ERR_OK;
+  }
+  return ERR_NOT_UP;
+}
+
+service* sv_find_by_name(const char* sv_name) {
   service* current = sv_head;
   while(current) {
-    if(strcmp(current->name, sv_name) == 0 && current->state != SV_FAILED) {
-      current->state = SV_STOPPED;
-      kill(current->pid, SIGTERM);
-      return ERR_OK;
-    }
-    current = current-> next;
+    if(strcmp(current->name, sv_name) == 0) return current;
+    current = current->next;
   }
-  return ERR_NOT_AV;
+  return NULL;
+}
+
+int sv_state(const char* sv_name, uid_t euid) {
+  if(euid != 0) return ERR_PERM;
+
+  const service* sv = sv_find_by_name(sv_name);
+  if(sv == NULL) return STATE_UNKNOW;
+  switch (sv->state) {
+    case SV_UP: return STATE_UP;
+    case SV_RESTART_PENDING: return STATE_RESTART_PENDING;
+    case SV_FAILED: return STATE_FAILED;
+    case SV_STOPPED: return STATE_STOPPED;
+    default: return STATE_UNKNOW;
+  }
 }
