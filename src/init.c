@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include "klog.h"
 #include "ctl.h"
 #include "phase.h"
 #include "sv.h"
@@ -30,7 +31,7 @@ void handle_sigchld() {
     if(pid == shell_pid) {
       shell_dead = true;
     }
-    fprintf(stdout, "[ INFO ] reaped process: %d\n", pid);
+
   }
   errno = save_errno;
 }
@@ -63,7 +64,8 @@ int main() {
   sv_enable("ntpd", 0);
   sv_parse_enabled();
   sv_exec_enabled();
-  //TODO:  improve the ctl, improve logging
+
+  //TODO:  improve the ctl
 
   int lfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
   struct sockaddr_un addr  = { .sun_family = AF_UNIX, .sun_path = "/run/init.sock" };
@@ -71,7 +73,7 @@ int main() {
   unlink("/run/init.sock");
   if( bind(lfd, (struct sockaddr * )&addr, sizeof(struct sockaddr_un)) < 0 ) fprintf(stderr, "[ FAIL ] Unable to bind the socket\n");
   if (listen(lfd, 5) == -1) {
-   fprintf(stderr, "[ FAIL ] Unable to listen to Unix domain socket: %s\n", strerror(errno));
+   klog(FAIL, "failed to listen to Unix domain socket: %s\n", strerror(errno));
 }
 
   while(1){

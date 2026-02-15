@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <errno.h>
 
+#include "klog.h"
+
 char* read_hostname() {
   FILE* fp = fopen("/etc/hostname", "r");
   if(fp == NULL) {
@@ -26,15 +28,15 @@ int main() {
   char* hostname = read_hostname();
 
   if(hostname == NULL) {
-    fprintf(stderr, "[ FAIL ] Read etc/hostname: %s\n", strerror(errno));
+    klog(FAIL, "failed to read etc/hostname: %s", strerror(errno));
     return -1;
   } else {
     size_t len = strlen(hostname);
     if(sethostname(hostname, len) != 0) {
-      fprintf(stderr, "[ FAIL ] Set hostname: %s\n", strerror(errno));
+      klog(FAIL, "failed to set hostname: %s", strerror(errno));
       return -1;
     } else {
-      fprintf(stderr, "[ OK ] Set hostname to %s\n", hostname);
+      klog(OK, "set hostname to %s", hostname);
       return 0;
     }
   }

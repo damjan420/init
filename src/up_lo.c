@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <stdio.h>
 
+#include "klog.h"
+
 int main() {
 
   int soc = socket(AF_INET, SOCK_DGRAM, 0);
@@ -16,7 +18,7 @@ int main() {
 
   if(ioctl(soc, SIOCGIFFLAGS, &ifr) < 0) {
    close(soc);
-   fprintf(stderr, "[ FAIL ] Loopback interface 'lo' is DOWN: %s\n", strerror(errno));
+   klog(FAIL, "loopback interface 'lo' DOWN: %s", strerror(errno));
    return -1;
   }
 
@@ -24,11 +26,11 @@ int main() {
 
   if(ioctl(soc, SIOCSIFFLAGS, &ifr) < 0) {
    close(soc);
-   fprintf(stderr, "[ FAIL ] Loopback interface 'lo' is DOWN: %s\n", strerror(errno));
+   klog(FAIL, "loopback interface 'lo' DOWN: %s", strerror(errno));
    return -1;
   };
 
   close(soc);
-  fprintf(stderr, "[ OK ] Loopback interface 'lo' is UP\n");
+  klog(OK, "loopback interface 'lo' UP");
   return 0;
 }

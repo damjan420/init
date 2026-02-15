@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <time.h>
 
+#include "klog.h"
 #include "sv.h"
 #include "ctl.h"
 
@@ -50,7 +51,7 @@ service* sv_parse(const char* sv_path, const char* fname) {
 
   FILE* sv_fp = fopen(sv_path, "r");
   if(sv_fp == NULL) {
-    fprintf(stderr, "[ FAIL ] Unable to open service file %s: %s\n", sv_path, strerror(errno));
+    klog(FAIL, "Unable to open service file %s: %s", sv_path, strerror(errno));
     return NULL;
   };
 
@@ -67,7 +68,7 @@ service* sv_parse(const char* sv_path, const char* fname) {
 
      char* eq = strchr(line, '=');
      if(eq == NULL) {
-       fprintf(stdout, "[ INFO ] Line %d in service file %s missing an equal characther '='. skipping line\n", ln, fname);
+       klog(INFO, "Line %d in service file %s missing an equal characther '='. skipping line", ln, fname);
        continue;
      };
 
@@ -85,13 +86,13 @@ service* sv_parse(const char* sv_path, const char* fname) {
        else if(strcmp(val, "never") == 0) sv->restart = SV_RS_NEVER;
        else if(strcmp(val, "on-failure") == 0) sv->restart = SV_RS_ON_FAILURE;
        else {
-         fprintf(stdout, "[ INFO ] Unknow restart option %s at line %d in service file %s. Assuming restart=never\n", val, ln, fname);
+         klog(INFO ,"Unknow restart option %s at line %d in service file %s. Assuming restart=never", val, ln, fname);
          sv->restart = SV_RS_NEVER;
        }
 
      }
      else {
-       fprintf(stdout, "[ INFO ] Unknow key at line %d in service file %s. Skipping line\n", ln, key);
+       klog(INFO, "Unknow key at line %d in service file %s. Skipping line", ln, key);
      }
   }
   fclose(sv_fp);
@@ -103,12 +104,12 @@ service* sv_parse(const char* sv_path, const char* fname) {
   }
 
   if(sv->exec == NULL) {
-    fprintf(stderr, "[ FAIL ] Service file %s missing an exec field\n", fname);
+    klog(FAIL, "Service file %s missing an exec field", fname);
     return NULL;
   }
 
   if(sv->restart == 0) {
-    fprintf(stderr, "[ FAIL ] Service file %s missing a restart field\n ", fname);
+    klog(FAIL, "Service file %s missing a restart field", fname);
   }
 
   sv->name = strdup(fname);
@@ -140,7 +141,7 @@ char* sv_conc_en_path(const char* sv_name) {
 void sv_parse_enabled(){
   DIR* enabled_dp = opendir(SV_ENABLED_DIR);
   if(enabled_dp == NULL) {
-    fprintf(stderr, "Unable to open dir %s: %s\n", SV_ENABLED_DIR, strerror(errno));
+    klog(FAIL, "Unable to open dir %s: %s", SV_ENABLED_DIR, strerror(errno));
     return;
 
   }
@@ -160,7 +161,7 @@ void sv_parse_enabled(){
       service* sv = sv_parse(sv_en_path, name);
       free(sv_en_path);
       if(sv == NULL) {
-        fprintf(stderr, "[ FAIL ] Unable to parse file %s/%s\n", SV_ENABLED_DIR, name);
+        klog(FAIL, "Unable to parse file service file %s/%s", SV_ENABLED_DIR, name);
       }
 
 
@@ -179,9 +180,9 @@ void sv_exec(service* sv) {
   if(sv == NULL) return;
   pid_t pid = fork();
   if(pid == 0) {
-    fprintf(stdout, "[ INFO ] Executing service %s\n", sv->name);
+    klog(INFO, "starting service %s", sv->name);
     execv_line(sv->exec);
-    fprintf(stderr, "[ FAIL ] Executing service %s: %s\n", sv->name, strerror(errno));
+    klog(FAIL, "failed to start service %s: %s", sv->name, strerror(errno));
     _exit(-1);
   }
   sv->pid = pid;
@@ -227,7 +228,7 @@ void sv_schedule_restart(service* sv, int status) {
    if(sv->restart == SV_RS_NEVER) return;
 
   if(sv->restart_count >= MAX_RESTARTS) {
-    fprintf(stdout, "[ INFO ] Service %s crashed 5 times in 25 seconds. Marking as FAILED\n", sv->name);
+    klog(FAIL, "service %s crashed 5 times in 25 seconds. Marking as FAILED", sv->name);
     sv->state = SV_FAILED;
     sv->next_restart = 0;
     return;
@@ -237,7 +238,7 @@ void sv_schedule_restart(service* sv, int status) {
           ( (sv->restart == SV_RS_ON_FAILURE) && ( (WIFEXITED(status) && WEXITSTATUS(status) != 0 )
           || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM) ) ) ){
 
-      fprintf(stdout, "[ INFO ] Service %s crashed. Next restart in 5 seconds\n", sv->name);
+      klog(FAIL, "service %s crashed. Next restart in 5 seconds", sv->name);
       time_t now = time(NULL);
       sv->state = SV_RESTART_PENDING;
       sv->next_restart = now + 5;
@@ -301,7 +302,7 @@ int  sv_enable(const char* sv_name, uid_t euid) {
   if(access(sv_en_path, F_OK) == 0) {
     return ERR_ALR_EN;
   }
-  fprintf(stdout, "%s, %s\n", sv_av_path, sv_en_path);
+
   symlink(sv_av_path, sv_en_path);
 
   free(sv_av_path);

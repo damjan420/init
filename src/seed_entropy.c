@@ -5,12 +5,12 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/ioctl.h>
-
+#include "klog.h"
 int main() {
 
   int seed_fd = open("/var/lib/seed", O_RDONLY);
   if(seed_fd < 0) {
-    fprintf(stderr, "[ FAIL ] Open random seed file located at /var/lib/seed: %s\n", strerror(errno));
+    klog(FAIL, "failed to open random seed file located at /var/lib/seed: %s", strerror(errno));
     return -1;
   }
 
@@ -22,7 +22,7 @@ int main() {
 
     entropy.size = read(seed_fd, entropy.data, 512);
     if(entropy.size < 0) {
-      fprintf(stderr, "[ FAIL ] Read random seed file located at /var/lib/seed: %s\n", strerror(errno));
+      klog(FAIL, "failed to read random seed file located at /var/lib/seed: %s", strerror(errno));
       return -1;
     }
     entropy.ent_count = entropy.size * 8;
@@ -30,17 +30,17 @@ int main() {
     int csprngi_fd = open("/dev/urandom", O_WRONLY);
 
     if(csprngi_fd < 0) {
-      fprintf(stderr, "[ FAIL ] Read from CSPRNG interface: %s\n", strerror(errno));
+      klog(FAIL, "failed to open CSPRNG interface file descriptor: %s", strerror(errno));
       return -1;
     }
 
     if(ioctl(csprngi_fd, RNDADDENTROPY, &entropy) < 0) {
-      fprintf(stderr, "[ FAIL ] Entropy injection: %s\n", strerror(errno));
-      fprintf(stderr, "[ INFO ] CSPRNG temporarily DOWN\n");
+      klog(FAIL, "entropy injection failed: %s", strerror(errno));
+      klog(INFO, "CSPRNG temporarily DOWN");
     }
 
-    fprintf(stderr, "[ OK ] Entropy injection\n");
-    fprintf(stderr, "[ INFO ] CSPRNG UP\n");
+    klog(OK, "entropy injection successful");
+    klog(INFO, "CSPRNG UP");
 
     return 0;
 

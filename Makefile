@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -static -Wall
+CFLAGS = -static -Wall src/klog.c
 BINARY = rootfs/init
 CPID_FILE = rootfs/initramfs.cpio
 KERNEL = /boot/vmlinuz-$(shell uname -r)

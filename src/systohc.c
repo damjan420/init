@@ -7,6 +7,8 @@
 #include <string.h>
 #include <errno.h>
 
+#include "klog.h"
+
 int main() {
   time_t now = time(NULL);
   const struct tm* tm = localtime(&now);
@@ -26,8 +28,8 @@ int main() {
     };
 
     if( ioctl(rtc_fd, RTC_SET_TIME, &rtc) < 0){
-      fprintf(stderr, "[ FAIL ] Sync hardware clock to the system time: %s\n", strerror(errno));
-    } else fprintf(stderr, "[ OK ] Sync hardware clock to the system time\n");
+      klog(FAIL, "failed to sync  hardware clock to the system time: %s", strerror(errno));
+    } else klog(OK, "synced hardware clock to the system time");
 
     close(rtc_fd);
 }
