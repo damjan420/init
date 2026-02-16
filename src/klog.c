@@ -11,6 +11,26 @@ void set_loglevel(int loglevel) {
   write(printk_fd, buf, sizeof(buf));
 }
 
+void klog_ctl(int loglevel, const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+
+  char buf[256];
+  int offset = snprintf(buf, sizeof(buf), "<%d>initctl: ", loglevel);
+  int msg = vsnprintf(buf + offset, sizeof(buf) - offset, format, args);
+  snprintf(buf + offset + msg, 2, "\n");
+  va_end(args);
+
+  if(offset < 0 || msg < 0) return;
+
+
+  int kmesg_fd = open("/dev/kmsg", O_WRONLY);
+  if(kmesg_fd < 0) return;
+
+  write(kmesg_fd, buf, sizeof(buf));
+  close(kmesg_fd);
+}
+
 void klog(int loglevel, const char* format, ...) {
   va_list args;
   va_start(args, format);

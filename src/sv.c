@@ -123,7 +123,8 @@ char* sv_conc_av_path(const char* sv_name) {
   char* sv_av_path = malloc(av_path_len);
 
   if(sv_av_path == NULL) return NULL;
-  snprintf(sv_av_path, av_path_len, "%s/%s.sv", SV_AVALIVABLE_DIR , sv_name);
+
+  snprintf(sv_av_path, av_path_len, "%s/%s.sv", SV_AVALIVABLE_DIR, sv_name);
 
   return sv_av_path;
 }
@@ -133,7 +134,8 @@ char* sv_conc_en_path(const char* sv_name) {
   char* sv_en_path = malloc(en_path_len);
 
   if(sv_en_path == NULL) return NULL;
-  snprintf(sv_en_path, en_path_len, "%s/%s.sv", SV_ENABLED_DIR , sv_name);
+
+  snprintf(sv_en_path, en_path_len, "%s/%s.sv", SV_ENABLED_DIR, sv_name);
 
   return sv_en_path;
 }
@@ -294,6 +296,7 @@ int  sv_enable(const char* sv_name, uid_t euid) {
   if(sv_av_path == NULL) return ERR_NO_MEM;
 
   if(access(sv_av_path, F_OK) != 0) {
+    free(sv_av_path);
     return ERR_NOT_AV;
   }
 
@@ -301,6 +304,10 @@ int  sv_enable(const char* sv_name, uid_t euid) {
   if(sv_en_path == NULL) return ERR_NO_MEM;
 
   if(access(sv_en_path, F_OK) == 0) {
+
+    free(sv_av_path);
+    free(sv_en_path);
+
     return ERR_ALR_EN;
   }
 
@@ -318,9 +325,10 @@ int sv_disable(const char* sv_name, uid_t euid) {
   if(sv_en_path == NULL) return ERR_NO_MEM;
 
   if(access(sv_en_path, F_OK) != 0) {
+    free(sv_en_path);
     return ERR_NOT_EN;
-
   }
+
   remove(sv_en_path);
   free(sv_en_path);
   return ERR_OK;
@@ -341,7 +349,13 @@ int sv_start(const char* sv_name, uid_t euid) {
   if(euid != 0) return ERR_PERM;
 
   char* sv_av_path = sv_conc_av_path(sv_name);
-  if(access(sv_av_path, F_OK) != 0) return ERR_NOT_AV;
+
+  if(sv_av_path == NULL) return ERR_NO_MEM;
+
+  if(access(sv_av_path, F_OK) != 0) {
+    free(sv_av_path);
+    return ERR_NOT_AV;
+  }
 
   service* sv = sv_parse(sv_av_path, sv_name);
 
@@ -353,6 +367,7 @@ int sv_start(const char* sv_name, uid_t euid) {
   sv_head = sv;
   sv_exec(sv);
 
+  free(sv_av_path);
   return ERR_OK;
 }
 

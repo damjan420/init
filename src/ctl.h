@@ -1,6 +1,6 @@
 #include <sys/types.h>
 
-#define MAX_SV_NAME 256
+#define MAX_PAYLOAD_SIZE 8192
 
 enum {
   A_ENABLE,
@@ -25,11 +25,27 @@ enum {
   ERR_ALR_UP = -6,
   ERR_NOT_UP = -7,
   ERR_CANT_PARSE = -8,
-  ERR_UNSUPORTED = -9,
+  ERR_TO_LARGE = -9,
+  ERR_UNSUPORTED = -10,
 };
 
-typedef struct  {
-  int action;
+typedef struct {
   uid_t euid;
-  int sv_name_len;
-} ctl_payload;
+  size_t payload_size;
+} req_hdr;
+
+typedef struct {
+  int action;
+  char sv_name[];
+} req_payload;
+
+typedef struct {
+  int err;
+  size_t size;
+  char data[256];
+} res_payload;
+
+/* typedef struct{ */
+/*   pid_t pid; */
+/*   int state; */
+/* } sv_state; */

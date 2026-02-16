@@ -5,9 +5,12 @@
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <sys/uio.h>
 
+#include "klog.h"
 #include "ctl.h"
 #include "sv.h"
+
 
 char* init_strerror(int err) {
   // TODO: improve error messages
@@ -63,56 +66,76 @@ char* init_strerror(int err) {
 int main(int argc, const char* argv[]) {
 
   if(argc < 3) {
-    fprintf(stdout, "Usage: <action> <service>\n actions: enable, disable, start, stop, status\n");
+    fprintf(stdout, "Usage: <action> <service>\nactions: enable, disable, start, stop, status\n");
     return -1;
   }
 
-  ctl_payload payload;
+  req_hdr header;
+  size_t payload_size = (sizeof(int)) + strlen(argv[2]) + 1;
+  req_payload* payload = malloc(payload_size);
+
+  if(payload == NULL) {
+    klog_ctl(FAIL, "failed to allocate memory for ctl payload: %s", strerror(errno));
+    return -1;
+  }
 
   if(strcmp(argv[1], "enable") == 0) {
-    payload.action = A_ENABLE;
+    payload->action = A_ENABLE;
   }
 
   else if(strcmp(argv[1], "disable") == 0) {
-    payload.action = A_DISABLE;
+    payload->action = A_DISABLE;
   }
 
   else if(strcmp(argv[1], "start") == 0) {
-    payload.action = A_START;
+    payload->action = A_START;
   }
 
 
   else if(strcmp(argv[1], "stop") == 0) {
-    payload.action = A_STOP;
+    payload->action = A_STOP;
   }
 
   else if(strcmp(argv[1], "state") == 0) {
-    payload.action = A_STATE;
+    payload->action = A_STATE;
   }
 
   else {
     fprintf(stderr, "Unknow action : %s\n", argv[1]);
+    free(payload);
     return -1;
   }
 
-  payload.euid = geteuid();
-  payload.sv_name_len = strlen(argv[2]);
+  header.euid = geteuid();
+  header.payload_size = payload_size;
 
-  char buf[512];
+  struct iovec iov[2];
 
-  memcpy(buf, &payload, sizeof(payload));
-  memcpy(buf + sizeof(payload), argv[2], payload.sv_name_len);
+  iov[0].iov_base = &header;
+  iov[0].iov_len = sizeof(header);
 
-  int cfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+  strcpy(payload->sv_name, argv[2]);
+
+  iov[1].iov_base = payload;
+  iov[1].iov_len  = header.payload_size;
+
+  int lfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
   struct sockaddr_un addr  = { .sun_family = AF_UNIX, .sun_path = "/run/init.sock" };
-  if (connect(cfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
 
-    if( write(cfd, &buf , sizeof(buf)) < 0) fprintf(stderr, "[ FAIL ] Unable to write to fd: %s\n", strerror(errno));
+  if (connect(lfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+
+    if( writev(lfd, iov , 2) < 0) {
+      klog_ctl(FAIL, "failed to write to listener socket(fd=%d): %s\n", lfd, strerror(errno));
+      free(payload);
+      return -1;
+    }
     int err;
-    read(cfd, &err, sizeof(int));
+    read(lfd, &err, sizeof(int));
     char* msg = init_strerror(err);
     fprintf(stdout, "%s", msg);
     free(msg);
-  } else fprintf(stderr, "[ FAIL ] unable to connect to the socket: %s\n", strerror(errno));
-  close(cfd);
+  } else klog_ctl(FAIL, "failed to connect to listener socket(fd=%d): %s\n", lfd, strerror(errno));
+
+  free(payload);
+  close(lfd);
 }

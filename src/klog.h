@@ -3,3 +3,4 @@
 #define INFO 6
 void set_loglevel(int loglevel);
 void klog(int loglevel, const char* format, ...);
+void klog_ctl(int loglevel, const char* format, ...);

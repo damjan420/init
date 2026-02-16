@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <stdlib.h>
+#include <sys/uio.h>
 
 #include "klog.h"
 #include "ctl.h"
@@ -124,29 +125,63 @@ int main() {
     }
 
     else if((ret > 0) && (fds[1].revents & POLLIN)) {
-      fflush(stdout);
       int cfd = accept(lfd, NULL, NULL);
+      if(cfd < 0) {
+        klog(FAIL, "failed to accept from ctl socket: %s", cfd, strerror(errno));
+      }
+      req_hdr header;
 
-      char buf[512];
+      if( recv(cfd, &header, sizeof(header), MSG_PEEK) < 0) {
+        klog(FAIL, "failed to recv from ctl socket(fd=%d): %s", cfd, strerror(errno));
+        continue;
+      };
 
-      ctl_payload payload ;
-      read(cfd, buf, sizeof(buf));
+      if(header.payload_size > MAX_PAYLOAD_SIZE) {
+        int err = ERR_TO_LARGE;
+        if( write(cfd, &err, sizeof(int)) < 0) {
+          klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
+        }
+        close(cfd);
+        continue;
+      }
 
-      memcpy(&payload, buf, sizeof(payload));
-      char* sv_name = malloc(payload.sv_name_len);
-      if(sv_name == NULL) continue;
-      memcpy(sv_name, buf + sizeof(payload), payload.sv_name_len);
 
-      fprintf(stdout, "action: %d, sv: %s\n", payload.action, sv_name);
-      int err = handle_ctl_payload(payload.action, sv_name, payload.euid);
-      write(cfd, &err, sizeof(int));
+      req_payload* payload = malloc(header.payload_size);
+
+
+      if(payload == NULL) {
+        klog(FAIL, "failed to allocate memmory for ctl payload: %s", cfd, strerror(errno));
+        int err = ERR_NO_MEM;
+        if( write(cfd, &err, sizeof(int)) < 0) {
+          klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
+        }
+        close(cfd);
+        continue;
+      }
+
+      struct iovec iov[2];
+      iov[0].iov_base = &header;
+      iov[0].iov_len = sizeof(req_hdr);
+      iov[1].iov_base = payload;
+      iov[1].iov_len = header.payload_size;
+
+      if( readv(cfd, iov, 2) < 0) {
+        klog(FAIL, "failed to readv from ctl socket(fd=%d): %s", cfd, strerror(errno));
+      };
+
+
+      fprintf(stdout, "action: %d, sv: %s\n", payload->action, payload->sv_name);
+      int err = handle_ctl_payload(payload->action, payload->sv_name, header.euid);
+      if( write(cfd, &err, sizeof(int)) < 0) {
+        klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
+      };
       close(cfd);
+      free(payload);
 
     }
 
     else sv_restart();
 
   }
-
 
 }
