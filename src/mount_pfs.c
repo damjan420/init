@@ -27,12 +27,12 @@ int quick_mount(const char* src, const char* dest, const char* fs, uint64_t flag
 int main() {
 
   if(quick_mount("devpts", "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC) == -1) {
-    klog(FAIL, "failed to mount /dev/pts: %s\n", strerror(errno));
+    klog(FAIL, "failed to mount /dev/pts: %s", strerror(errno));
   } else klog(OK, "mounted /dev/pts");
 
 
   if(quick_mount("tmpfs", "/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV) == -1) {
-    klog(FAIL, "failed to mount /dev/shm: %s\n", strerror(errno));
+    klog(FAIL, "failed to mount /dev/shm: %s", strerror(errno));
   } else klog(OK, "mount /dev/shm");
 
 

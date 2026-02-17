@@ -79,7 +79,7 @@ void phase_three(int power_action) {
 
   if(umount("/run") < 0) {
     klog(FAIL, "failed to unmount /run: %s", strerror(errno));
-  } else  klog(OK, "failed to unmount /run\n");
+  } else  klog(OK, "failed to unmount /run");
 
   if(umount("/dev/pts") < 0) {
     klog(FAIL, "failed to unmount  /dev/pts: %s", strerror(errno));
@@ -92,7 +92,7 @@ void phase_three(int power_action) {
 
   if(umount("/dev") < 0) {
     klog(FAIL, "failed to unmount /dev: %s", strerror(errno));
-  } else  klog(OK, "unmounted /dev\n");
+  } else  klog(OK, "unmounted /dev");
 
   if(umount("/sys/fs/cgroup") < 0) {
     klog(FAIL, "failed to unmount /sys/fs/cgroup: %s", strerror(errno));

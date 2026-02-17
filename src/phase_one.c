@@ -48,7 +48,7 @@ void phase_one() {
   set_loglevel(INFO +1);
 
   if(n == 4) {
-    klog(OK, "mounted rootfs as read-write\n");
+    klog(OK, "mounted rootfs as read-write");
     klog(OK, "mounted pseudo filesystems /proc, /sys and dev");
   }
 
@@ -67,7 +67,7 @@ void phase_one() {
   if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/up_lo",  NULL };
     execv(args[0], args);
-    klog(FAIL, "failed to launch core service up_lo: %s\n", strerror(errno));
+    klog(FAIL, "failed to launch core service up_lo: %s", strerror(errno));
     _exit(-1);
   }
 
@@ -75,7 +75,7 @@ void phase_one() {
   if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/prep_cgroup",  NULL };
     execv(args[0], args);
-    klog(FAIL, "failed to launch core service prep_cgroup: %s\n", strerror(errno));
+    klog(FAIL, "failed to launch core service prep_cgroup: %s", strerror(errno));
     _exit(-1);
   }
 
@@ -83,7 +83,7 @@ void phase_one() {
   if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/set_hostname",  NULL };
     execv(args[0], args);
-    klog(FAIL, "failed to launch core service set_hostname: %s\n", strerror(errno));
+    klog(FAIL, "failed to launch core service set_hostname: %s", strerror(errno));
     _exit(-1);
   }
 
@@ -91,7 +91,7 @@ void phase_one() {
   if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/seed_entropy",  NULL };
     execv(args[0], args);
-    klog(FAIL, "failed to launch core service seed_entropy: %s\n", strerror(errno));
+    klog(FAIL, "failed to launch core service seed_entropy: %s", strerror(errno));
     _exit(-1);
   }
 
@@ -99,7 +99,7 @@ void phase_one() {
   if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/systohc",  NULL };
     execv(args[0], args);
-    klog(FAIL, "failed to launch core service systohc: %s\n", strerror(errno));
+    klog(FAIL, "failed to launch core service systohc: %s", strerror(errno));
     _exit(-1);
   }
 
@@ -107,12 +107,11 @@ void phase_one() {
   if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/loadkeys_setfont",  NULL };
     execv(args[0], args);
-    klog(FAIL, "failed to launch core service loadkeys: %s\n", strerror(errno));
+    klog(FAIL, "failed to launch core service loadkeys: %s", strerror(errno));
     _exit(-1);
   }
 
   while (wait(NULL) > 0);
-  klog(INFO, "made it here");
   set_loglevel(FAIL +1);
 
 }
