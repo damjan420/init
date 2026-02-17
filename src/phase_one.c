@@ -73,9 +73,17 @@ void phase_one() {
 
   pid = fork();
   if(pid == 0) {
+    char *args[] = { "/bin/init.d/core_services/prep_cgroup",  NULL };
+    execv(args[0], args);
+    klog(FAIL, "failed to launch core service prep_cgroup: %s\n", strerror(errno));
+    _exit(-1);
+  }
+
+  pid = fork();
+  if(pid == 0) {
     char *args[] = { "/bin/init.d/core_services/set_hostname",  NULL };
     execv(args[0], args);
-   klog(FAIL, "failed to launch core service set_hostname: %s\n", strerror(errno));
+    klog(FAIL, "failed to launch core service set_hostname: %s\n", strerror(errno));
     _exit(-1);
   }
 
@@ -104,6 +112,7 @@ void phase_one() {
   }
 
   while (wait(NULL) > 0);
+  klog(INFO, "made it here");
   set_loglevel(FAIL +1);
 
 }

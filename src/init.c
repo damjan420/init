@@ -1,4 +1,3 @@
-#define _POSIX_C_SOURCE 200112L
 #define _GNU_SOURCE
 
 #include <errno.h>
@@ -9,35 +8,41 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <poll.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <stdlib.h>
 #include <sys/uio.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
 
 #include "klog.h"
 #include "ctl.h"
 #include "phase.h"
 #include "sv.h"
+#include "init.h"
 
 volatile sig_atomic_t shell_dead = true;
 pid_t shell_pid = -1;
+
+
+int epfd = -1;
 
 void handle_sigchld() {
   pid_t pid;
   int save_errno = errno;
   int status;
   while((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-    sv_schedule_restart(sv_find_by_pid(pid), status);
+    sv_process_status(sv_find_by_pid(pid), status);
     if(pid == shell_pid) {
       shell_dead = true;
     }
-
   }
   errno = save_errno;
 }
 
+int nfds = 2;
+/* struct pollfd fds[MAX_POLL_FDS]; */
 
 int handle_ctl_payload(int action, char* sv_name, uid_t euid) {
   switch (action) {
@@ -49,6 +54,7 @@ int handle_ctl_payload(int action, char* sv_name, uid_t euid) {
   default:        return ERR_UNSUPORTED;
   }
 }
+
 
 int main() {
 
@@ -63,12 +69,18 @@ int main() {
 
   sigprocmask(SIG_BLOCK, &mask, NULL);
 
+
   int sfd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+  struct epoll_event signal_event = {.data.ptr = NULL, .events=EPOLLIN};
+
+  epfd = epoll_create1(0);
+  struct epoll_event events[1000];
+  epoll_ctl(epfd, EPOLL_CTL_ADD, sfd, &signal_event);
+
   sv_enable("ntpd", 0);
   sv_parse_enabled();
   sv_exec_enabled();
 
-  //TODO:  improve the ctl
 
   int lfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
   struct sockaddr_un addr  = { .sun_family = AF_UNIX, .sun_path = "/run/init.sock" };
@@ -77,111 +89,219 @@ int main() {
   if( bind(lfd, (struct sockaddr * )&addr, sizeof(struct sockaddr_un)) < 0 ) fprintf(stderr, "[ FAIL ] Unable to bind the socket\n");
   if (listen(lfd, 5) == -1) {
    klog(FAIL, "failed to listen to Unix domain socket: %s\n", strerror(errno));
+  }
+
+  struct epoll_event ctl_event  = {.data.ptr = (void*)-1, .events=EPOLLIN};
+  epoll_ctl(epfd, EPOLL_CTL_ADD, lfd, &ctl_event);
+  /* fcntl(fd, F_SETFL, flags | O_NONBLOCK); /\*  *\/ */
+  pid_t pid = fork();
+  if (pid == 0) {
+    setsid(); // Start new session
+
+    int tty_fd = open("/dev/console", O_RDWR);
+    ioctl(tty_fd, TIOCSCTTY, 1); // Claim controlling TTY
+
+    dup2(tty_fd, 0);
+    dup2(tty_fd, 1);
+    dup2(tty_fd, 2);
+    if (tty_fd > 2) close(tty_fd);
+
+    char *args[] = { "/bin/sh", NULL };
+    execv(args[0], args);
+    _exit(1);
 }
 
   while(1){
 
-    struct pollfd fds[2];
-    fds[0].fd = sfd;
-    fds[0].events = POLLIN;
 
-    fds[1].fd = lfd;
-    fds[1].events = POLLIN;
 
-    if(shell_dead == true) {
-      shell_dead = false;
-
-      pid_t pid = fork();
-      shell_pid = pid;
-
-      if(pid == 0) {
-        char *args[] = { "/bin/sh",  NULL };
-
-        execv(args[0], args);
-
-        fprintf(stderr, "[ FAIL ] execv sh failed: %s\n", strerror(errno)); // TODO: start getty
-        _exit(1);
+    int n_ready = epoll_wait(epfd, events, 1000, -1);
+    if (n_ready) {
+      if (errno == EINTR) {
+        continue; // or continue; depending on your loop nesting
       }
     }
-
-    struct timespec* timeout = sv_get_next_restart();
-    int ret = ppoll(fds, 2, timeout, NULL);
-
-    sv_update_stable();
-
-    if( (ret > 0) && (fds[0].revents & POLLIN)) {
-
-      struct signalfd_siginfo fdsi;
-      read(fds[0].fd, &fdsi, sizeof(fdsi));
-      if(fdsi.ssi_signo == SIGCHLD) {
-        handle_sigchld();
+    for(int i = 0; i < n_ready; i++) {
+      struct epoll_event ev = events[i];
+      if(ev.data.ptr == NULL) { //sfd
+        struct signalfd_siginfo fdsi;
+          read(sfd, &fdsi, sizeof(fdsi));
+          if(fdsi.ssi_signo == SIGCHLD) {
+            handle_sigchld();
+          }
+          else if(fdsi.ssi_signo == SIGUSR1) {
+            phase_three(1);
+          }
+          else if(fdsi.ssi_signo == SIGUSR2) {
+            phase_three(2);
+          }
       }
-      else if(fdsi.ssi_signo == SIGUSR1) {
-        phase_three(1);
-      }
-      else if(fdsi.ssi_signo == SIGUSR2) {
-        phase_three(2);
-      }
-    }
+      else if(ev.data.ptr == (void*)-1) {
+        int cfd = accept(lfd, NULL, NULL);
+        if(cfd < 0) {
+          klog(FAIL, "failed to accept from ctl socket: %s", cfd, strerror(errno));
+        }
+        req_hdr header;
 
-    else if((ret > 0) && (fds[1].revents & POLLIN)) {
-      int cfd = accept(lfd, NULL, NULL);
-      if(cfd < 0) {
-        klog(FAIL, "failed to accept from ctl socket: %s", cfd, strerror(errno));
-      }
-      req_hdr header;
+        if( recv(cfd, &header, sizeof(header), MSG_PEEK) < 0) {
+          klog(FAIL, "failed to recv from ctl socket(fd=%d): %s", cfd, strerror(errno));
+          continue;
+        };
 
-      if( recv(cfd, &header, sizeof(header), MSG_PEEK) < 0) {
-        klog(FAIL, "failed to recv from ctl socket(fd=%d): %s", cfd, strerror(errno));
-        continue;
-      };
+        if(header.payload_size > MAX_PAYLOAD_SIZE) {
+          int err = ERR_TO_LARGE;
+          if( write(cfd, &err, sizeof(int)) < 0) {
+            klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
+          }
+          close(cfd);
+          continue;
+        }
 
-      if(header.payload_size > MAX_PAYLOAD_SIZE) {
-        int err = ERR_TO_LARGE;
+
+        req_payload* payload = malloc(header.payload_size);
+
+
+        if(payload == NULL) {
+          klog(FAIL, "failed to allocate memmory for ctl payload: %s", cfd, strerror(errno));
+          int err = ERR_NO_MEM;
+          if( write(cfd, &err, sizeof(int)) < 0) {
+            klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
+          }
+          close(cfd);
+          continue;
+        }
+
+        struct iovec iov[2];
+        iov[0].iov_base = &header;
+        iov[0].iov_len = sizeof(req_hdr);
+        iov[1].iov_base = payload;
+        iov[1].iov_len = header.payload_size;
+
+        if( readv(cfd, iov, 2) < 0) {
+          klog(FAIL, "failed to readv from ctl socket(fd=%d): %s", cfd, strerror(errno));
+        };
+
+
+        fprintf(stdout, "action: %d, sv: %s\n", payload->action, payload->sv_name);
+        int err = handle_ctl_payload(payload->action, payload->sv_name, header.euid);
         if( write(cfd, &err, sizeof(int)) < 0) {
           klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
-        }
+        };
         close(cfd);
-        continue;
+        free(payload);
+
       }
-
-
-      req_payload* payload = malloc(header.payload_size);
-
-
-      if(payload == NULL) {
-        klog(FAIL, "failed to allocate memmory for ctl payload: %s", cfd, strerror(errno));
-        int err = ERR_NO_MEM;
-        if( write(cfd, &err, sizeof(int)) < 0) {
-          klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
-        }
-        close(cfd);
-        continue;
+      else {
+        service* sv = events[i].data.ptr;
+        sv_handle_restart_or_stop_timer_exp(sv);
       }
-
-      struct iovec iov[2];
-      iov[0].iov_base = &header;
-      iov[0].iov_len = sizeof(req_hdr);
-      iov[1].iov_base = payload;
-      iov[1].iov_len = header.payload_size;
-
-      if( readv(cfd, iov, 2) < 0) {
-        klog(FAIL, "failed to readv from ctl socket(fd=%d): %s", cfd, strerror(errno));
-      };
-
-
-      fprintf(stdout, "action: %d, sv: %s\n", payload->action, payload->sv_name);
-      int err = handle_ctl_payload(payload->action, payload->sv_name, header.euid);
-      if( write(cfd, &err, sizeof(int)) < 0) {
-        klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno));
-      };
-      close(cfd);
-      free(payload);
-
     }
-
-    else sv_restart();
-
   }
-
 }
+
+
+
+/*   fds[0].fd = sfd; */
+/*   fds[0].events = POLLIN; */
+
+/*   fds[1].fd = lfd; */
+/*   fds[1].events = POLLIN; */
+
+  /*   if(shell_dead == true) { */
+  /*     shell_dead = false; */
+
+  /*     pid_t pid = fork(); */
+  /*     shell_pid = pid; */
+
+  /*     if(pid == 0) { */
+  /*       char *args[] = { "/bin/sh",  NULL }; */
+
+  /*       execv(args[0], args); */
+
+  /*       fprintf(stderr, "[ FAIL ] execv sh failed: %s\n", strerror(errno)); // TODO: start getty */
+  /*       _exit(1); */
+  /*     } */
+  /*   } */
+
+
+  /*   int ret = ppoll(fds, 2, NULL, NULL); */
+
+  /*   sv_update_stable(); */
+
+  /*   if(fds[0].revents & POLLIN) { */
+
+  /*     struct signalfd_siginfo fdsi; */
+  /*     read(fds[0].fd, &fdsi, sizeof(fdsi)); */
+  /*     if(fdsi.ssi_signo == SIGCHLD) { */
+  /*       handle_sigchld(); */
+  /*     } */
+  /*     else if(fdsi.ssi_signo == SIGUSR1) { */
+  /*       phase_three(1); */
+  /*     } */
+  /*     else if(fdsi.ssi_signo == SIGUSR2) { */
+  /*       phase_three(2); */
+  /*     } */
+  /*   } */
+
+  /*   else if(fds[1].revents & POLLIN) { */
+  /*     int cfd = accept(lfd, NULL, NULL); */
+  /*     if(cfd < 0) { */
+  /*       klog(FAIL, "failed to accept from ctl socket: %s", cfd, strerror(errno)); */
+  /*     } */
+  /*     req_hdr header; */
+
+  /*     if( recv(cfd, &header, sizeof(header), MSG_PEEK) < 0) { */
+  /*       klog(FAIL, "failed to recv from ctl socket(fd=%d): %s", cfd, strerror(errno)); */
+  /*       continue; */
+  /*     }; */
+
+  /*     if(header.payload_size > MAX_PAYLOAD_SIZE) { */
+  /*       int err = ERR_TO_LARGE; */
+  /*       if( write(cfd, &err, sizeof(int)) < 0) { */
+  /*         klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno)); */
+  /*       } */
+  /*       close(cfd); */
+  /*       continue; */
+  /*     } */
+
+
+  /*     req_payload* payload = malloc(header.payload_size); */
+
+
+  /*     if(payload == NULL) { */
+  /*       klog(FAIL, "failed to allocate memmory for ctl payload: %s", cfd, strerror(errno)); */
+  /*       int err = ERR_NO_MEM; */
+  /*       if( write(cfd, &err, sizeof(int)) < 0) { */
+  /*         klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno)); */
+  /*       } */
+  /*       close(cfd); */
+  /*       continue; */
+  /*     } */
+
+  /*     struct iovec iov[2]; */
+  /*     iov[0].iov_base = &header; */
+  /*     iov[0].iov_len = sizeof(req_hdr); */
+  /*     iov[1].iov_base = payload; */
+  /*     iov[1].iov_len = header.payload_size; */
+
+  /*     if( readv(cfd, iov, 2) < 0) { */
+  /*       klog(FAIL, "failed to readv from ctl socket(fd=%d): %s", cfd, strerror(errno)); */
+  /*     }; */
+
+
+  /*     fprintf(stdout, "action: %d, sv: %s\n", payload->action, payload->sv_name); */
+  /*     int err = handle_ctl_payload(payload->action, payload->sv_name, header.euid); */
+  /*     if( write(cfd, &err, sizeof(int)) < 0) { */
+  /*       klog(FAIL, "failed to write to ctl socket(fd=%d): %s", cfd, strerror(errno)); */
+  /*     }; */
+  /*     close(cfd); */
+  /*     free(payload); */
+
+  /*   } */
+
+  /*   else { */
+  /*     service* sv = sv_head; */
+  /*     for(int i < 0) */
+  /*   } */
+
+  /* } */

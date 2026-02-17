@@ -19,9 +19,11 @@ enum {
 };
 enum {
   SV_UP,
+  SV_DOWN,
   SV_FAILED,
   SV_RESTART_PENDING,
   SV_STOPPED,
+  SV_STOPPING,
 };
 
 
@@ -32,8 +34,9 @@ typedef struct service {
   int state;
   int restart;
   int restart_count;
+  int restart_timer_fd;
+  int stop_timer_fd;
   time_t start;
-  time_t next_restart;
   struct service* next;
   struct service* prev;
 } service;
@@ -43,11 +46,10 @@ extern service* sv_head;
 
 void sv_parse_enabled();
 void sv_exec_enabled();
-void sv_restart();
-void sv_schedule_restart(service* sv, int status);
-struct timespec* sv_get_next_restart();
+void sv_process_status(service* sv, int status);
 service* sv_find_by_pid(pid_t pid);
 void sv_update_stable();
+void sv_handle_restart_or_stop_timer_exp(service* sv);
 
 int  sv_enable(const char* sv_name, uid_t euid);
 int sv_disable(const char* sv_name, uid_t euid);

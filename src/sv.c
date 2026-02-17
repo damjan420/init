@@ -10,9 +10,13 @@
 #include <sys/types.h>
 #include <time.h>
 #include <stdbool.h>
+#include <sys/timerfd.h>
+#include <sys/epoll.h>
 
 #include "klog.h"
 #include "sv.h"
+#include "init.h"
+#include "cgroup.h"
 #include "ctl.h"
 
 service* sv_head = NULL;
@@ -83,11 +87,15 @@ service* sv_parse(const char* sv_path, const char* fname) {
 
      }
      else if(strcmp(key, "restart") == 0) {
+       printf("%s=%s\n", key, val);
        if(strcmp(val, "always") == 0) sv->restart = SV_RS_ALWAYS;
        else if(strcmp(val, "never") == 0) sv->restart = SV_RS_NEVER;
-       else if(strcmp(val, "on-failure") == 0) sv->restart = SV_RS_ON_FAILURE;
+       else if(strcmp(val, "on-failure") == 0) {
+         printf("went here\n");
+         sv->restart = SV_RS_ON_FAILURE;
+       }
        else {
-         klog(INFO ,"Unknow restart option %s at line %d in service file %s. Assuming restart=never", val, ln, fname);
+         klog(INFO ,"unknow restart option %s at line %d in service file %s. Assuming restart=never", val, ln, fname);
          sv->restart = SV_RS_NEVER;
        }
 
@@ -181,21 +189,23 @@ void sv_parse_enabled(){
 
 void sv_exec(service* sv) {
   if(sv == NULL) return;
-  pid_t pid = fork();
-  if(pid == 0) {
+  sv->pid = fork();
+  if(sv->pid == 0) {
     klog(INFO, "starting service %s", sv->name);
+    cg_start(sv);
     execv_line(sv->exec);
     klog(FAIL, "failed to start service %s: %s", sv->name, strerror(errno));
     _exit(-1);
   }
-  sv->pid = pid;
   sv->state = SV_UP;
   sv->start = time(NULL);
 }
 
 void sv_exec_enabled() {
   service* current = sv_head;
+
   while(current) {
+    printf("%s\n", current->name);
     sv_exec(current);
     current = current->next;
   }
@@ -211,66 +221,82 @@ service* sv_find_by_pid(pid_t pid) {
 }
 
 
-void sv_restart() {
-  time_t now = time(NULL);
-  service* current = sv_head;
+void sv_process_status(service* sv, int status) {
 
-  while(current) {
-    if(current->state == SV_RESTART_PENDING && current->next_restart >= now){
-      current->restart_count++;
-      sv_exec(current);
+  if(sys_state == SYS_SHUTDOWN) return;
+  if(sv == NULL) return;
 
-    }
-    current = current->next;
-  }
-}
+  bool failed =  (
+                  (WIFEXITED(status) && WEXITSTATUS(status) != 0 )
+                  || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM)
+                  );
+  if(sv->state == SV_FAILED) return;
+  if(sv->state == SV_STOPPED) return;
 
-void sv_schedule_restart(service* sv, int status) {
-   if(sys_state == SYS_SHUTDOWN) return;
-   if(sv == NULL) return;
-   if(sv->restart == SV_RS_NEVER) return;
-
-  if(sv->restart_count >= MAX_RESTARTS) {
-    klog(FAIL, "service %s crashed 5 times in 25 seconds. Marking as FAILED", sv->name);
-    sv->state = SV_FAILED;
-    sv->next_restart = 0;
+  else if(sv->state == SV_STOPPING) {
+    uint64_t expirations;
+    read(sv->stop_timer_fd, &expirations, sizeof(expirations));
+    epoll_ctl(epfd, EPOLL_CTL_DEL, sv->restart_timer_fd, NULL);
+    close(sv->stop_timer_fd);
+    sv->stop_timer_fd = -1;
+    sv->state = SV_STOPPED;
     return;
   }
 
-  else if ( (sv->restart == SV_RS_ALWAYS) ||
-          ( (sv->restart == SV_RS_ON_FAILURE) && ( (WIFEXITED(status) && WEXITSTATUS(status) != 0 )
-          || (WIFSIGNALED(status) && WTERMSIG(status) != SIGTERM) ) ) ){
-
-      klog(FAIL, "service %s crashed. Next restart in 5 seconds", sv->name);
-      time_t now = time(NULL);
-      sv->state = SV_RESTART_PENDING;
-      sv->next_restart = now + 5;
-      sv->restart_count++;
-
-    }
-
-
-};
-
-struct timespec* sv_get_next_restart() {
-  const service* current = sv_head;
-  time_t now  = time(NULL);
-
-  struct timespec* ts = calloc(1, sizeof(struct timespec));
-  if(ts == NULL) return NULL;
-
-  while(current) {
-    if(current->state == SV_RESTART_PENDING) {
-
-      ts->tv_sec = current->next_restart - now;
-
-      return ts;
-    }
-    current = current -> next;
+  if(sv->restart == SV_RS_NEVER) {
+    if(failed) sv->state = SV_FAILED;
+    else       sv->state = SV_DOWN;
   }
 
-  return NULL;
+  else if((sv->restart == SV_RS_ALWAYS) || ( sv->restart == SV_RS_ON_FAILURE && failed)) {
+    if(sv->restart_count >= MAX_RESTARTS) {
+      klog(FAIL, "service %s chrased 5 times in 25 seconds. marking as FAILED", sv->name);
+      sv->state=SV_FAILED;
+      return;
+    }
+    klog(FAIL, "failed: %d", failed);
+    klog(FAIL, "service %s crashed. Next restart in 5 seconds", sv->name);
+
+      sv->restart_count++;
+
+      sv->state = SV_RESTART_PENDING;
+      sv->restart_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+      struct itimerspec its = {0};
+      its.it_value.tv_sec = 5;
+      its.it_value.tv_nsec = 0;
+      timerfd_settime(sv->restart_timer_fd, 0, &its,NULL);
+
+      struct epoll_event service_event = {.data.ptr = sv, .events=EPOLLIN};
+
+      epoll_ctl(epfd, EPOLL_CTL_ADD, sv->restart_timer_fd, &service_event);
+
+  }
 }
+
+
+void sv_handle_restart_or_stop_timer_exp(service* sv) {
+
+  uint64_t expirations;
+
+  printf("restart: %d, stop: %d\n", sv->restart_timer_fd, sv->stop_timer_fd);
+
+  if(sv->restart_timer_fd > 0) {
+    read(sv->restart_timer_fd, &expirations, sizeof(expirations));
+    epoll_ctl(epfd, EPOLL_CTL_DEL, sv->restart_timer_fd, NULL);
+    close(sv->restart_timer_fd);
+    sv->restart_timer_fd = -1;
+    sv_exec(sv);
+  }
+  else if(sv->stop_timer_fd > 0) {;
+    read(sv->stop_timer_fd, &expirations, sizeof(expirations));
+    epoll_ctl(epfd, EPOLL_CTL_DEL, sv->stop_timer_fd, NULL);
+    close(sv->stop_timer_fd);
+    sv->stop_timer_fd = -1;
+    sv->state = SV_STOPPED;
+    cg_kill(sv);
+  }
+}
+
 
 void sv_update_stable() { // if restart_count = 0 service is stable
   service* current = sv_head;
@@ -279,7 +305,6 @@ void sv_update_stable() { // if restart_count = 0 service is stable
   while(current) {
     if(now - current->start >= 60) {
       current->restart_count = 0;
-      current->next_restart = 0;
     }
     current = current->next;
   }
@@ -377,12 +402,34 @@ int sv_stop(const char* sv_name, uid_t euid) {
   if(euid != 0) return ERR_PERM;
   service* sv = sv_get_if_up(sv_name);
   if(sv != NULL) {
+
+    if(sv->state == SV_RESTART_PENDING) {
+      uint64_t expirations;
+      read(sv->restart_timer_fd, &expirations, sizeof(expirations));
+      epoll_ctl(epfd, EPOLL_CTL_DEL, sv->restart_timer_fd, NULL);
+      close(sv->restart_timer_fd);
+      sv->restart_timer_fd = -1;
+      return ERR_OK;
+    }
+
     kill(sv->pid, SIGTERM);
-    sv->state = SV_STOPPED;
+    sv->state = SV_STOPPING;
+
+    sv->stop_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    struct itimerspec its = {0};
+    its.it_value.tv_sec = 5;
+    its.it_value.tv_nsec = 0;
+    timerfd_settime(sv->stop_timer_fd, 0, &its,NULL);
+
+    struct epoll_event service_event = {.data.ptr = sv, .events=EPOLLIN};
+    epoll_ctl(epfd, EPOLL_CTL_ADD, sv->stop_timer_fd, &service_event);
+
     return ERR_OK;
   }
   return ERR_NOT_UP;
 }
+
+
 
 service* sv_find_by_name(const char* sv_name) {
   service* current = sv_head;
@@ -397,12 +444,13 @@ int sv_state(const char* sv_name, uid_t euid) {
   if(euid != 0) return ERR_PERM;
 
   const service* sv = sv_find_by_name(sv_name);
-  if(sv == NULL) return STATE_UNKNOW;
+  if(sv == NULL) return STATE_UNKNOWN;
   switch (sv->state) {
     case SV_UP: return STATE_UP;
     case SV_RESTART_PENDING: return STATE_RESTART_PENDING;
     case SV_FAILED: return STATE_FAILED;
     case SV_STOPPED: return STATE_STOPPED;
-    default: return STATE_UNKNOW;
+    case SV_STOPPING: return STATE_STOPPING;
+    default: return STATE_UNKNOWN;
   }
 }

@@ -17,6 +17,7 @@ $(CORE_SERVICES):
 	$(CC) $(CFLAGS)  src/seed_entropy.c -o $(CORE_SERVICES)/seed_entropy
 	$(CC) $(CFLAGS)  src/systohc.c -o $(CORE_SERVICES)/systohc
 	$(CC) $(CFLAGS)  src/loadkeys_setfont.c -o $(CORE_SERVICES)/loadkeys_setfont
+	$(CC) $(CFLAGS)  src/prep_cgroup.c -o $(CORE_SERVICES)/prep_cgroup
 
 
 $(CTL_BINARY): src/ctl.c
@@ -25,7 +26,7 @@ $(CTL_BINARY): src/ctl.c
 
 # 1. Compile only the init code
 $(BINARY): src/init.c
-	$(CC) $(CFLAGS) src/phase_one.c src/phase_three.c src/sv.c src/init.c -o $(BINARY)
+	$(CC) $(CFLAGS) src/phase_one.c src/phase_three.c src/cgroup.c src/sv.c src/init.c -o $(BINARY)
 
 # 2. Pack the archive using the rootfs directory
 $(CPID_FILE): $(BINARY) $(CORE_SERVICES) $(CTL_BINARY)

@@ -28,6 +28,9 @@ char* init_strerror(int err) {
   case STATE_STOPPED:
     msg = "Service stopped\n";
     break;
+  case STATE_UNKNOWN:
+    msg = "State unknown\n";
+    break;
   case ERR_OK:
     msg = "Sucess\n";
     break;

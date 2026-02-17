@@ -44,10 +44,5 @@ int main() {
     klog(FAIL, "failed to mount /tmp: %s", strerror(errno));
   } else klog(OK, "mounted /tmp");
 
-
-  if(quick_mount("cgroup2", "/sys/fs/cgroup", "cgroup2", MS_NOSUID | MS_NOEXEC | MS_NODEV) == -1) {
-    klog(FAIL, "failed to mount /sys/fs/cgroup: %s", strerror(errno));
-  } else klog(OK, "mounted /sys/fs/cgroup");
-
   return 0;
 }
