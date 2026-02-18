@@ -13,6 +13,7 @@
 
 #include "klog.h"
 #include "sv.h"
+#include "cgroup.h"
 
 int count_processes() {
     int count = 0;
@@ -48,6 +49,7 @@ void phase_three(int power_action) {
   klog(INFO, "starting grace period");
 
 
+
   for(int timeout = 30; timeout > 0; timeout--){
     while(waitpid(-1, NULL, WNOHANG) > 0);
 
@@ -55,8 +57,17 @@ void phase_three(int power_action) {
     usleep(1000 * 100);
   }
 
-  klog(INFO, "sending SIGKILL to all processes");
-  kill(-1, SIGKILL);
+  klog(INFO, "killing all service cgroups");
+
+
+  current = sv_head;
+  while(current) {
+    if(current->state == SV_UP) {
+      cg_kill(current);
+      current->state = SV_STOPPED;
+    }
+    current = current->next;
+  }
 
   char next_seed[512];
   if(getrandom(&next_seed, 512, 0) < 0) {
@@ -75,7 +86,6 @@ void phase_three(int power_action) {
 
   sync();
 
- //dev/pts /dev/shm /run /sys/fs/cgroup
 
   if(umount("/run") < 0) {
     klog(FAIL, "failed to unmount /run: %s", strerror(errno));

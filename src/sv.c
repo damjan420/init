@@ -22,7 +22,7 @@
 service* sv_head = NULL;
 int sys_state = SYS_RUNNING;
 
-char* trim(char* str) {
+static char* trim(char* str) {
   while(isspace((unsigned char)*str))str++;
   if(*str == 0) return str;
   char* end = str + strlen(str) -1;
@@ -31,8 +31,193 @@ char* trim(char* str) {
   return str;
 }
 
+static void sv_parse_file_line(service* sv, char* line, int ln, const char* fname) {
+  if(line == NULL) return;
 
-void execv_line(char* line) {
+  line[strcspn(line, "\r\n")] = '\0';
+  if(strncmp(line, "#", 1) == 0 || strncmp(line, "\0", 1) == 0) return;
+
+  line = trim(line);
+
+  char* eq = strchr(line, '=');
+  if(eq == NULL) {
+    klog(INFO, "line %d in service file %s.sv missing an equal characther '='. skipping line", ln, fname);
+    return;
+  };
+
+  *eq = '\0';
+  const char* key = trim(line);
+
+  const char* val = trim(eq + 1);
+
+  if(strcmp(key, "exec") == 0) {
+    sv->exec = strdup(val);
+  }
+  else if(strcmp(key, "restart") == 0) {
+    if(strcmp(val, "always") == 0) sv->restart = SV_RS_ALWAYS;
+    else if(strcmp(val, "never") == 0) sv->restart = SV_RS_NEVER;
+    else if(strcmp(val, "on-failure") == 0) {
+      sv->restart = SV_RS_ON_FAILURE;
+    }
+    else {
+      klog(INFO ,"unknow restart option %s at line %d in service file %s. Assuming restart=never", val, ln, fname);
+      sv->restart = SV_RS_NEVER;
+    }
+  }
+  else if(strcmp(key, "pids_max") == 0) {
+    if(strcmp(val, "max") == 0) sv->pids_max = -1;
+    else {
+      char* end;
+      int64_t i  = strtol(val, &end, 10);
+      if(val == end || *end != '\0') {
+        klog(INFO, "failed to parse value for pids_max in service file %s.sv. Assuming pids_max=max", fname);
+      }
+      else if(errno == ERANGE) {
+        klog(INFO, "value for pids_max in service file %s.sv out of range. Assuming pids_max=max", fname);
+      }
+      else {
+        if(i < 0) {
+          klog(INFO, "value for pids_max in service file %s.sv negative. Assuming pids_max=max", fname);
+        }
+        else sv->pids_max = i;
+      }
+    }
+  }
+  else if(strcmp(key, "memory_max") == 0) {
+    if(strcmp(val, "max") == 0) sv->memory_max = -1;
+    else {
+      char* end;
+      int64_t i  = strtol(val, &end, 10);
+      if(val == end || *end != '\0') {
+        klog(INFO, "failed to parse value for memory_max in %s.sv. Assuming pids_max=max", fname);
+      }
+      else if(errno == ERANGE) {
+        klog(INFO, "value for memroy_max in %s.sv out of range. Assuming pids_max=max", fname);
+      }
+      else {
+        if(i < 0) {
+          klog(INFO, "value for memory_max in %s.sv negative. Assuming pids.max=max", fname);
+        } else sv->memory_max = i;
+      }
+    }
+  }
+  else if(strcmp(key, "cpu_quota") == 0) {
+    if(strcmp(val, "max") == 0) sv->cpu_quota = -1;
+    else {
+      char* end;
+      int64_t i  = strtol(val, &end, 10);
+      if(val == end || *end != '\0') {
+        klog(INFO, "failed to parse value for cpu_quota in %s.sv. Assuming cpu_quota=max", fname);
+      }
+      else if(errno == ERANGE) {
+        klog(INFO, "value for cpu_quota in %s.sv out of range. Assuming cpu_quota=max", fname);
+      }
+      else {
+        if(i < 0) {
+          klog(INFO, "value for cpu_quota in %s.sv negative. Assuming cpu_quota=max", fname);
+        } else sv->cpu_quota = i;
+      }
+    }
+  }
+  else if(strcmp(key, "cpu_period") == 0) { ;
+    char* end;
+    int64_t i  = strtol(val, &end, 10);
+    if(val == end || *end != '\0') {
+      klog(INFO, "failed to parse value for cpu_period in %s.sv. Assuming cpu_perdiod=100000", fname);
+    }
+    else if(errno == ERANGE) {
+      klog(INFO, "value for cpu_period in %s.sv out of range. Assuming period=100000", fname);
+    }
+    else {
+      if(i < 0) {
+        klog(INFO, "value for cpu_period in %s.sv negative. Assuming cpu_period=max", fname);
+      } else sv->cpu_period = i;
+    }
+  }
+  else {
+    klog(INFO, "unknow key at line %d in service file %s.sv. Skipping line", ln, key);
+  }
+}
+
+static service* sv_init() {
+  service* sv = calloc(1, sizeof(service));
+  if(sv == NULL) return NULL;
+
+  sv->restart_count = 0;
+  sv->restart_timer_fd = -1;
+  sv->stop_timer_fd = -1;
+  sv->pids_max = -1;
+  sv->memory_max = -1;
+  sv->cpu_quota = -1;
+  sv->cpu_period = 100000;
+  return sv;
+};
+
+static service* sv_parse(const char* sv_path, const char* fname) {
+  if(fname == NULL) return NULL;
+  FILE* sv_fp = fopen(sv_path, "r");
+  if(sv_fp == NULL) {
+    klog(FAIL, "failed to open service file %s.sv: %s", sv_path, strerror(errno));
+    return NULL;
+  };
+  service* sv = sv_init();
+  if(sv == NULL) {
+    fclose(sv_fp);
+    return NULL;
+  }
+
+
+  size_t len;
+  char* line = NULL;
+  for(int ln=0; getline(&line, &len, sv_fp) > 0; ln++) {
+     sv_parse_file_line(sv, line, ln, fname);
+  }
+  fclose(sv_fp);
+  if(line) free(line);
+
+  else{
+    free(sv);
+    return NULL;
+  }
+
+  if(sv->exec == NULL) {
+    klog(FAIL, "service file %s.sv missing an exec field", fname);
+    return NULL;
+  }
+
+  if(sv->restart == 0) {
+    klog(FAIL, "service file %s.sv missing a restart field", fname);
+    return NULL;
+  }
+
+  sv->name = strdup(fname);
+
+  return sv;
+}
+
+static char* sv_conc_av_path(const char* sv_name) {
+  size_t av_path_len = strlen(SV_AVALIVABLE_DIR) + strlen(sv_name) + 6;
+  char* sv_av_path = malloc(av_path_len);
+
+  if(sv_av_path == NULL) return NULL;
+
+  snprintf(sv_av_path, av_path_len, "%s/%s.sv", SV_AVALIVABLE_DIR, sv_name);
+
+  return sv_av_path;
+}
+
+static char* sv_conc_en_path(const char* sv_name) {
+  size_t en_path_len = strlen(SV_ENABLED_DIR) + strlen(sv_name) + 6;
+  char* sv_en_path = malloc(en_path_len);
+
+  if(sv_en_path == NULL) return NULL;
+
+  snprintf(sv_en_path, en_path_len, "%s/%s.sv", SV_ENABLED_DIR, sv_name);
+
+  return sv_en_path;
+}
+
+static void execv_line(char* line) {
 
   char *args[64];
   int i = 0;
@@ -51,108 +236,53 @@ void execv_line(char* line) {
   execv(args[0], args);
 }
 
-
-service* sv_parse(const char* sv_path, const char* fname) {
-
-  FILE* sv_fp = fopen(sv_path, "r");
-  if(sv_fp == NULL) {
-    klog(FAIL, "Unable to open service file %s: %s", sv_path, strerror(errno));
-    return NULL;
-  };
-
-  service* sv = calloc(1, sizeof(service));
-
-  size_t len;
-  char* line = NULL;
-  for(int ln=0; getline(&line, &len, sv_fp) > 0; ln++) {
-
-     line[strcspn(line, "\r\n")] = '\0';
-     if(strncmp(line, "#", 1) == 0 || strncmp(line, "\0", 1) == 0) continue;
-
-     line = trim(line);
-
-     char* eq = strchr(line, '=');
-     if(eq == NULL) {
-       klog(INFO, "Line %d in service file %s missing an equal characther '='. skipping line", ln, fname);
-       continue;
-     };
-
-     *eq = '\0';
-     const char* key = trim(line);
-
-     const char* val = trim(eq + 1);
-
-     if(strcmp(key, "exec") == 0) {
-       sv->exec = strdup(val);
-
-     }
-     else if(strcmp(key, "restart") == 0) {
-       printf("%s=%s\n", key, val);
-       if(strcmp(val, "always") == 0) sv->restart = SV_RS_ALWAYS;
-       else if(strcmp(val, "never") == 0) sv->restart = SV_RS_NEVER;
-       else if(strcmp(val, "on-failure") == 0) {
-         printf("went here\n");
-         sv->restart = SV_RS_ON_FAILURE;
-       }
-       else {
-         klog(INFO ,"unknow restart option %s at line %d in service file %s. Assuming restart=never", val, ln, fname);
-         sv->restart = SV_RS_NEVER;
-       }
-
-     }
-     else {
-       klog(INFO, "Unknow key at line %d in service file %s. Skipping line", ln, key);
-     }
+static void sv_exec(service* sv) {
+  if(sv == NULL) return;
+  sv->pid = fork();
+  if(sv->pid == 0) {
+    klog(INFO, "starting service %s", sv->name);
+    cg_start(sv);
+    execv_line(sv->exec);
+    klog(FAIL, "failed to start service %s: %s", sv->name, strerror(errno));
+    _exit(-1);
   }
-  fclose(sv_fp);
-  if(line) free(line);
-
-  else{
-    free(sv);
-    return NULL;
-  }
-
-  if(sv->exec == NULL) {
-    klog(FAIL, "Service file %s missing an exec field", fname);
-    return NULL;
-  }
-
-  if(sv->restart == 0) {
-    klog(FAIL, "Service file %s missing a restart field", fname);
-  }
-
-  sv->name = strdup(fname);
-
-  return sv;
+  sv->state = SV_UP;
+  sv->start = time(NULL);
 }
 
-char* sv_conc_av_path(const char* sv_name) {
-  size_t av_path_len = strlen(SV_AVALIVABLE_DIR) + strlen(sv_name) + 6;
-  char* sv_av_path = malloc(av_path_len);
 
-  if(sv_av_path == NULL) return NULL;
-
-  snprintf(sv_av_path, av_path_len, "%s/%s.sv", SV_AVALIVABLE_DIR, sv_name);
-
-  return sv_av_path;
+static service* sv_find_by_name(const char* sv_name) {
+  service* current = sv_head;
+  while(current) {
+    if(strcmp(current->name, sv_name) == 0) return current;
+    current = current->next;
+  }
+  return NULL;
 }
 
-char* sv_conc_en_path(const char* sv_name) {
-  size_t en_path_len = strlen(SV_ENABLED_DIR) + strlen(sv_name) + 6;
-  char* sv_en_path = malloc(en_path_len);
-
-  if(sv_en_path == NULL) return NULL;
-
-  snprintf(sv_en_path, en_path_len, "%s/%s.sv", SV_ENABLED_DIR, sv_name);
-
-  return sv_en_path;
+static service* sv_get_if_up(const char* sv_name) { // treats SV_RESTART_PENDING as up
+  service* current = sv_head;
+  while(current) {
+    if(strcmp(current->name, sv_name) == 0 &&
+    (current->state == SV_UP || current->state == SV_RESTART_PENDING))
+      return current;
+    current = current->next;
+  }
+  return NULL;
 }
 
+static void sv_clear_timer(int* timer_fd) {
+  uint64_t expirations;
+  read(*timer_fd, &expirations, sizeof(uint64_t));
+  epoll_ctl(epfd, EPOLL_CTL_DEL, *timer_fd, NULL);
+  close(*timer_fd);
+  *timer_fd = -1;
+}
 
 void sv_parse_enabled(){
   DIR* enabled_dp = opendir(SV_ENABLED_DIR);
   if(enabled_dp == NULL) {
-    klog(FAIL, "Unable to open dir %s: %s", SV_ENABLED_DIR, strerror(errno));
+    klog(FAIL, "failed to open dir %s: %s", SV_ENABLED_DIR, strerror(errno));
     return;
 
   }
@@ -172,7 +302,7 @@ void sv_parse_enabled(){
       service* sv = sv_parse(sv_en_path, name);
       free(sv_en_path);
       if(sv == NULL) {
-        klog(FAIL, "Unable to parse file service file %s/%s", SV_ENABLED_DIR, name);
+        klog(FAIL, "failed to parse file service file %s.sv", name);
       }
 
 
@@ -185,20 +315,6 @@ void sv_parse_enabled(){
       }
     }
   };
-}
-
-void sv_exec(service* sv) {
-  if(sv == NULL) return;
-  sv->pid = fork();
-  if(sv->pid == 0) {
-    klog(INFO, "starting service %s", sv->name);
-    cg_start(sv);
-    execv_line(sv->exec);
-    klog(FAIL, "failed to start service %s: %s", sv->name, strerror(errno));
-    _exit(-1);
-  }
-  sv->state = SV_UP;
-  sv->start = time(NULL);
 }
 
 void sv_exec_enabled() {
@@ -234,11 +350,7 @@ void sv_process_status(service* sv, int status) {
   if(sv->state == SV_STOPPED) return;
 
   else if(sv->state == SV_STOPPING) {
-    uint64_t expirations;
-    read(sv->stop_timer_fd, &expirations, sizeof(expirations));
-    epoll_ctl(epfd, EPOLL_CTL_DEL, sv->restart_timer_fd, NULL);
-    close(sv->stop_timer_fd);
-    sv->stop_timer_fd = -1;
+    sv_clear_timer(&(sv->stop_timer_fd));
     sv->state = SV_STOPPED;
     return;
   }
@@ -276,25 +388,16 @@ void sv_process_status(service* sv, int status) {
 
 void sv_handle_restart_or_stop_timer_exp(service* sv) {
 
-  uint64_t expirations;
-
-  printf("restart: %d, stop: %d\n", sv->restart_timer_fd, sv->stop_timer_fd);
-
   if(sv->restart_timer_fd > 0) {
-    read(sv->restart_timer_fd, &expirations, sizeof(expirations));
-    epoll_ctl(epfd, EPOLL_CTL_DEL, sv->restart_timer_fd, NULL);
-    close(sv->restart_timer_fd);
-    sv->restart_timer_fd = -1;
+    sv_clear_timer(&(sv->restart_timer_fd));
     sv_exec(sv);
   }
-  else if(sv->stop_timer_fd > 0) {;
-    read(sv->stop_timer_fd, &expirations, sizeof(expirations));
-    epoll_ctl(epfd, EPOLL_CTL_DEL, sv->stop_timer_fd, NULL);
-    close(sv->stop_timer_fd);
-    sv->stop_timer_fd = -1;
+  else if(sv->stop_timer_fd > 0) {
+    sv_clear_timer(&(sv->stop_timer_fd));
     sv->state = SV_STOPPED;
     cg_kill(sv);
   }
+
 }
 
 
@@ -311,7 +414,7 @@ void sv_update_stable() { // if restart_count = 0 service is stable
 }
 
 
-int  sv_enable(const char* sv_name, uid_t euid) {
+int sv_enable(const char* sv_name, uid_t euid) {
 
 
   if(euid != 0) return ERR_PERM;
@@ -359,16 +462,6 @@ int sv_disable(const char* sv_name, uid_t euid) {
   return ERR_OK;
 }
 
-service* sv_get_if_up(const char* sv_name) { // treats SV_RESTART_PENDING as up
-  service* current = sv_head;
-  while(current) {
-    if(strcmp(current->name, sv_name) == 0 &&
-    (current->state == SV_UP || current->state == SV_RESTART_PENDING))
-      return current;
-    current = current->next;
-  }
-  return NULL;
-}
 
 int sv_start(const char* sv_name, uid_t euid) {
   if(euid != 0) return ERR_PERM;
@@ -404,11 +497,8 @@ int sv_stop(const char* sv_name, uid_t euid) {
   if(sv != NULL) {
 
     if(sv->state == SV_RESTART_PENDING) {
-      uint64_t expirations;
-      read(sv->restart_timer_fd, &expirations, sizeof(expirations));
-      epoll_ctl(epfd, EPOLL_CTL_DEL, sv->restart_timer_fd, NULL);
-      close(sv->restart_timer_fd);
-      sv->restart_timer_fd = -1;
+      sv_clear_timer(&(sv->restart_timer_fd));
+      sv->state = SV_STOPPED;
       return ERR_OK;
     }
 
@@ -429,16 +519,6 @@ int sv_stop(const char* sv_name, uid_t euid) {
   return ERR_NOT_UP;
 }
 
-
-
-service* sv_find_by_name(const char* sv_name) {
-  service* current = sv_head;
-  while(current) {
-    if(strcmp(current->name, sv_name) == 0) return current;
-    current = current->next;
-  }
-  return NULL;
-}
 
 int sv_state(const char* sv_name, uid_t euid) {
   if(euid != 0) return ERR_PERM;

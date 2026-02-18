@@ -12,26 +12,87 @@
 #define CGROUP_PATH "/sys/fs/cgroup/init/services"
 
 void cg_start(service* sv) {
-
-  char path[PATH_MAX];
-  int offset = snprintf(path, sizeof(path), "%s/%s", CGROUP_PATH, sv->name);
+  int services_dir_fd = open(CGROUP_PATH, O_DIRECTORY);
+  if(services_dir_fd < 0) {
+    klog(FAIL, "failed to open /sys/fs/cgroup/init/services: %s", strerror(errno));
+    return;
+  }
 
   mode_t mode = S_IRWXU | S_IRWXG | S_IROTH;
-  if(mkdir(path, mode) < 0 && errno != EEXIST) {
-    klog(FAIL, "failed to mkdir %s: %s", path, strerror(errno));
+  if(mkdirat(services_dir_fd,sv->name, mode) < 0) {
+    if(errno == EEXIST) {
+      close(services_dir_fd);
+      return;
+    };
+    klog(FAIL, "failed to mkdir %s/%s: %s", CGROUP_PATH,sv->name, strerror(errno));
   }
 
-  snprintf(path + offset, sizeof(path) - offset, "/cgroup.procs");
-  int procs_fd = open(path, O_WRONLY);
+  int sv_dir_fd = openat(services_dir_fd,sv->name, O_DIRECTORY);
 
+  if(sv_dir_fd < 0) {
+    close(services_dir_fd);
+    klog(FAIL, "failed to open dir %s/%s: %s", CGROUP_PATH, sv->name,strerror(errno));
+    return;
+  }
+
+  int procs_fd = openat(sv_dir_fd, "cgroup.procs", O_WRONLY);
   if(procs_fd < 0) {
-    klog(FAIL, "failed to open %s: %s", path, strerror(errno));
+    klog(FAIL, "failed to open %s/%s/cgroup.procs: %s",CGROUP_PATH,sv->name, strerror(errno));
   }
-
   if(dprintf(procs_fd, "%d", sv->pid) < 0) {
-    klog(FAIL, "failed to write to %s: %s", path, strerror(errno));
+    klog(FAIL, "failed to write to %s/%s/cgroup.procs: %s", CGROUP_PATH,sv->name, strerror(errno));
   }
 
+  int pids_fd = openat(sv_dir_fd, "pids.max", O_WRONLY);
+  if(pids_fd < 0) {
+    klog(FAIL, "failed to open %s/%s/pids.max: %s",CGROUP_PATH,sv->name, strerror(errno));
+  }
+  if(sv->pids_max == -1) {
+    if(dprintf(pids_fd, "max") < 0) {
+      klog(FAIL, "failed to write to %s/%s/pids.max: %s", CGROUP_PATH,sv->name, strerror(errno));
+    }
+  } else {
+
+    if(dprintf(pids_fd, "%ld", sv->pids_max) < 0) {
+      klog(FAIL, "failed to write to %s/%s/pids.max: %s", CGROUP_PATH,sv->name, strerror(errno));
+    }
+  }
+  int memory_fd = openat(sv_dir_fd, "memory.max", O_WRONLY);
+  if(memory_fd < 0) {
+    klog(FAIL, "failed to open %s/%s/memory.max: %s",CGROUP_PATH,sv->name, strerror(errno));
+  }
+  if(sv->memory_max == -1) {
+    if(dprintf(memory_fd, "max") < 0) {
+      klog(FAIL, "failed to write to %s/%s/memory.max: %s", CGROUP_PATH,sv->name, strerror(errno));
+    }
+  } else {
+
+    if(dprintf(memory_fd, "%ld", sv->memory_max) < 0) {
+      klog(FAIL, "failed to write to %s/%s/memory.max: %s", CGROUP_PATH,sv->name, strerror(errno));
+    }
+  }
+
+  int cpu_fd = openat(sv_dir_fd, "cpu.max", O_WRONLY);
+  if(cpu_fd < 0) {
+    klog(FAIL, "failed to open %s/%s/cpu.max: %s",CGROUP_PATH,sv->name, strerror(errno));
+  }
+  if(sv->cpu_quota == -1) {
+    if(dprintf(cpu_fd, "max %ld", sv->cpu_period) < 0) {
+      klog(FAIL, "failed to write to %s/%s/cpu.max: %s", CGROUP_PATH,sv->name, strerror(errno));
+    }
+  } else {
+
+    if(dprintf(cpu_fd, "%ld %ld", sv->cpu_quota, sv->cpu_period) < 0) {
+      klog(FAIL, "failed to write to %s/%s/cpu.max: %s", CGROUP_PATH,sv->name, strerror(errno));
+    }
+  }
+
+  close(services_dir_fd);
+  close(sv_dir_fd);
+  close(procs_fd);
+  close(pids_fd);
+  close(memory_fd);
+  close(cpu_fd);
 }
 
 void cg_kill(const service* sv) {

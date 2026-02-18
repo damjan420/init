@@ -1,4 +1,8 @@
+#ifndef _SV_H
+#define _SV_H
+
 #include <sys/types.h>
+#include <stdint.h>
 
 #define SV_ENABLED_DIR "/etc/init.d/en"
 #define SV_AVALIVABLE_DIR "/etc/init.d/av"
@@ -37,8 +41,11 @@ typedef struct service {
   int restart_timer_fd;
   int stop_timer_fd;
   time_t start;
+  int64_t pids_max;
+  int64_t memory_max;
+  int64_t cpu_quota;
+  int64_t cpu_period;
   struct service* next;
-  struct service* prev;
 } service;
 
 extern int sys_state;
@@ -56,3 +63,5 @@ int sv_disable(const char* sv_name, uid_t euid);
 int sv_start(const char* sv_name, uid_t euid);
 int sv_stop(const char* sv_name, uid_t euid);
 int sv_state(const char* sv_name, uid_t euid);
+
+#endif

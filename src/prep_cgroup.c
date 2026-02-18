@@ -13,7 +13,7 @@ int main() {
 
   if(mkdir("/sys/fs/cgroup", mode) < 0) {
     klog(FAIL, "failed to mkdir /sys/fs/cgroup: %s", strerror(errno));
-  } klog(OK, "made dir /sys/fs/cgroup");
+  } else klog(OK, "made dir /sys/fs/cgroup");
 
   if(mount("cgroup2", "/sys/fs/cgroup", "cgroup2", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == -1) {
     klog(FAIL, "failed to mount /sys/fs/cgroup: %s", strerror(errno));
@@ -40,7 +40,7 @@ int main() {
 
   if (mkdir("/sys/fs/cgroup/init/self", mode) < 0) {
     klog(FAIL, "failed to mkdir /sys/fs/cgroup/init/self: %s", strerror(errno));
-  } klog(OK, "made dir /sys/fs/cgroup/init/self");
+  } else klog(OK, "made dir /sys/fs/cgroup/init/self");
 
   int init_self_fd = open("/sys/fs/cgroup/init/self/cgroup.procs", O_WRONLY);
   if( dprintf(init_self_fd, "1") < 0) {
