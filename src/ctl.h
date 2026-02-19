@@ -1,3 +1,5 @@
+#pragma once
+
 #include <sys/types.h>
 
 #define MAX_PAYLOAD_SIZE 8192
@@ -11,13 +13,17 @@ enum {
 };
 
 enum {
-  ERR_OK,
-  STATE_UP,
+  STATE_UP =1,
+  STATE_DOWN,
   STATE_FAILED,
+  STATE_RESTART_PENDING,
   STATE_STOPPING,
   STATE_STOPPED,
-  STATE_RESTART_PENDING,
   STATE_UNKNOWN,
+};
+
+enum {
+  ERR_OK,
   ERR_NOT_AV = -1,
   ERR_ALR_EN = -2,
   ERR_NOT_EN = -3,
@@ -42,11 +48,6 @@ typedef struct {
 
 typedef struct {
   int err;
-  size_t size;
-  char data[256];
+  int state;
+  pid_t pid;
 } res_payload;
-
-/* typedef struct{ */
-/*   pid_t pid; */
-/*   int state; */
-/* } sv_state; */

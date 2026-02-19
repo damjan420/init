@@ -19,6 +19,9 @@
 #include "cgroup.h"
 #include "ctl.h"
 
+#define MY_MALLOC_IMPLEMENTATION
+#include "my_malloc.h"
+
 service* sv_head = NULL;
 int sys_state = SYS_RUNNING;
 
@@ -140,7 +143,7 @@ static void sv_parse_file_line(service* sv, char* line, int ln, const char* fnam
 }
 
 static service* sv_init() {
-  service* sv = calloc(1, sizeof(service));
+  service* sv = my_calloc(1, sizeof(service));
   if(sv == NULL) return NULL;
 
   sv->restart_count = 0;
@@ -176,7 +179,7 @@ static service* sv_parse(const char* sv_path, const char* fname) {
   if(line) free(line);
 
   else{
-    free(sv);
+    my_free(sv);
     return NULL;
   }
 
@@ -414,92 +417,133 @@ void sv_update_stable() { // if restart_count = 0 service is stable
 }
 
 
-int sv_enable(const char* sv_name, uid_t euid) {
+void sv_enable(const char* sv_name, uid_t euid, res_payload* payload_buf) {
 
 
-  if(euid != 0) return ERR_PERM;
-
+  if(euid != 0) {
+    payload_buf->err = ERR_PERM;
+    return;
+  }
   char* sv_av_path = sv_conc_av_path(sv_name);
 
-  if(sv_av_path == NULL) return ERR_NO_MEM;
+  if(sv_av_path == NULL){
+      payload_buf->err = ERR_NO_MEM;
+      return;
+    };
 
   if(access(sv_av_path, F_OK) != 0) {
     free(sv_av_path);
-    return ERR_NOT_AV;
+    payload_buf->err = ERR_NOT_AV;
+    return;
   }
 
   char* sv_en_path = sv_conc_en_path(sv_name);
-  if(sv_en_path == NULL) return ERR_NO_MEM;
+  if(sv_en_path == NULL) {
+      payload_buf->err = ERR_NO_MEM;
+      return;
+    }
 
   if(access(sv_en_path, F_OK) == 0) {
 
     free(sv_av_path);
     free(sv_en_path);
-
-    return ERR_ALR_EN;
+    payload_buf->err = ERR_ALR_EN;
+    return;
   }
 
   symlink(sv_av_path, sv_en_path);
 
   free(sv_av_path);
   free(sv_en_path);
-  return ERR_OK;
+  payload_buf->err = ERR_OK;
 }
 
-int sv_disable(const char* sv_name, uid_t euid) {
-
-  if(euid != 0) return ERR_PERM;
+void sv_disable(const char* sv_name, uid_t euid, res_payload* payload_buf) {
+  if(euid != 0) {
+    payload_buf->err = ERR_PERM;
+    return;
+  };
   char* sv_en_path = sv_conc_en_path(sv_name);
-  if(sv_en_path == NULL) return ERR_NO_MEM;
+  if(sv_en_path == NULL) {
+    payload_buf->err = ERR_NO_MEM;
+    return;
+  };
 
   if(access(sv_en_path, F_OK) != 0) {
     free(sv_en_path);
-    return ERR_NOT_EN;
+    payload_buf->err= ERR_NOT_EN;
+    return;
   }
 
   remove(sv_en_path);
   free(sv_en_path);
-  return ERR_OK;
+  payload_buf->err = ERR_OK;
 }
 
 
-int sv_start(const char* sv_name, uid_t euid) {
-  if(euid != 0) return ERR_PERM;
+void sv_start(const char* sv_name, uid_t euid, res_payload* payload_buf) {
+
+  if(payload_buf == NULL) return;
+
+  if(euid != 0) {
+    payload_buf->err = ERR_PERM;
+    return;
+  };
 
   char* sv_av_path = sv_conc_av_path(sv_name);
 
-  if(sv_av_path == NULL) return ERR_NO_MEM;
+  if(sv_av_path == NULL)  {
+    payload_buf->err = ERR_NO_MEM;
+    return;
+  };
 
   if(access(sv_av_path, F_OK) != 0) {
     free(sv_av_path);
-    return ERR_NOT_AV;
+    payload_buf->err = ERR_NOT_AV;
+    return;
   }
 
   service* sv = sv_parse(sv_av_path, sv_name);
 
-  if(sv == NULL) return ERR_CANT_PARSE;
+  if(sv == NULL) {
+    payload_buf->err = ERR_CANT_PARSE;
+    return;
+  };
 
-  if(sv_get_if_up(sv_name) != NULL) return ERR_ALR_UP;
+  if(sv_get_if_up(sv_name) != NULL) {
+    payload_buf->err = ERR_ALR_UP;
+  };
 
   sv->next = sv_head;
   sv_head = sv;
   sv_exec(sv);
 
   free(sv_av_path);
-  return ERR_OK;
+  payload_buf->err = ERR_OK;
+  payload_buf->state = sv->state;
+  payload_buf->pid = sv->pid;
 }
 
 
 
-int sv_stop(const char* sv_name, uid_t euid) {
-  if(euid != 0) return ERR_PERM;
+void sv_stop(const char* sv_name, uid_t euid, res_payload* payload_buf) {
+
+  if(payload_buf == NULL) return;
+
+  if(euid != 0) {
+    payload_buf->err = ERR_PERM;
+    return;
+  };
+
   service* sv = sv_get_if_up(sv_name);
   if(sv != NULL) {
 
     if(sv->state == SV_RESTART_PENDING) {
       sv_clear_timer(&(sv->restart_timer_fd));
       sv->state = SV_STOPPED;
-      return ERR_OK;
+      payload_buf->err = ERR_OK;
+      payload_buf->state = SV_STOPPED;
+      payload_buf->pid = sv->pid;
     }
 
     kill(sv->pid, SIGTERM);
@@ -514,23 +558,37 @@ int sv_stop(const char* sv_name, uid_t euid) {
     struct epoll_event service_event = {.data.ptr = sv, .events=EPOLLIN};
     epoll_ctl(epfd, EPOLL_CTL_ADD, sv->stop_timer_fd, &service_event);
 
-    return ERR_OK;
+    payload_buf->err = ERR_OK;
+    payload_buf->state = SV_STOPPED;
+    payload_buf->pid = sv->pid;
+    return;
   }
-  return ERR_NOT_UP;
+  payload_buf->err = ERR_NOT_UP;
 }
 
 
-int sv_state(const char* sv_name, uid_t euid) {
-  if(euid != 0) return ERR_PERM;
+void sv_state(const char* sv_name, uid_t euid, res_payload* payload_buf) {
+
+  if(payload_buf == NULL) return;
+
+  if(euid != 0) {
+    payload_buf->err = ERR_PERM;
+  };
 
   const service* sv = sv_find_by_name(sv_name);
-  if(sv == NULL) return STATE_UNKNOWN;
+
+  if(sv == NULL) {
+    payload_buf->state = STATE_UNKNOWN;
+    return;
+  }
+
   switch (sv->state) {
-    case SV_UP: return STATE_UP;
-    case SV_RESTART_PENDING: return STATE_RESTART_PENDING;
-    case SV_FAILED: return STATE_FAILED;
-    case SV_STOPPED: return STATE_STOPPED;
-    case SV_STOPPING: return STATE_STOPPING;
-    default: return STATE_UNKNOWN;
+  case SV_UP:              payload_buf->state = STATE_UP; break;
+  case SV_DOWN:            payload_buf->state = STATE_DOWN; break;
+  case SV_FAILED:          payload_buf->state = STATE_FAILED; break;
+  case SV_RESTART_PENDING: payload_buf->state = STATE_RESTART_PENDING; break;
+  case SV_STOPPING:        payload_buf->state = STATE_STOPPING; break;
+  case SV_STOPPED:         payload_buf->state = STATE_STOPPED; break;
+  default:                 payload_buf->state = STATE_UNKNOWN; break;
   }
 }

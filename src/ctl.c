@@ -66,6 +66,41 @@ char* init_strerror(int err) {
   char* ret = strdup(msg);
   return ret;
 }
+
+void display_res_payload(res_payload* payload, int action) {
+  if(action == A_ENABLE || action == A_DISABLE) {
+    char* msg = init_strerror(payload->err);
+      if(!msg) {
+        fprintf(stdout, "Insufficient memory to display response");
+        return;
+      }
+      fprintf(stdout, msg);
+      free(msg);
+  }
+  else {
+    char* err_msg = init_strerror(payload->err);
+    if(!err_msg) {
+      fprintf(stdout, "Insufficient memory to display response");
+      return;
+    }
+    fprintf(stdout, err_msg);
+    free(err_msg);
+
+    if(payload->err != ERR_OK) return;
+
+    char* state_msg = init_strerror(payload->state);
+    if(!state_msg) {
+      fprintf(stdout, "Insufficient memory to display response");
+      return;
+    }
+
+    fprintf(stdout, state_msg);
+    free(state_msg);
+
+    fprintf(stdout, "PID: %d\n", payload->pid);
+  }
+}
+
 int main(int argc, const char* argv[]) {
 
   if(argc < 3) {
@@ -132,11 +167,11 @@ int main(int argc, const char* argv[]) {
       free(payload);
       return -1;
     }
-    int err;
-    read(lfd, &err, sizeof(int));
-    char* msg = init_strerror(err);
-    fprintf(stdout, "%s", msg);
-    free(msg);
+    res_payload rspayload;
+    if( read(lfd, &rspayload, sizeof(res_payload)) < 0) {
+      klog_ctl(FAIL, "failed to read from listener socket(fd=%d): strerror(errno)", lfd);
+    }
+    display_res_payload(&rspayload, payload->action);
   } else klog_ctl(FAIL, "failed to connect to listener socket(fd=%d): %s\n", lfd, strerror(errno));
 
   free(payload);

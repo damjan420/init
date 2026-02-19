@@ -4,6 +4,8 @@
 #include <sys/types.h>
 #include <stdint.h>
 
+#include "ctl.h"
+
 #define SV_ENABLED_DIR "/etc/init.d/en"
 #define SV_AVALIVABLE_DIR "/etc/init.d/av"
 
@@ -58,10 +60,10 @@ service* sv_find_by_pid(pid_t pid);
 void sv_update_stable();
 void sv_handle_restart_or_stop_timer_exp(service* sv);
 
-int  sv_enable(const char* sv_name, uid_t euid);
-int sv_disable(const char* sv_name, uid_t euid);
-int sv_start(const char* sv_name, uid_t euid);
-int sv_stop(const char* sv_name, uid_t euid);
-int sv_state(const char* sv_name, uid_t euid);
+void  sv_enable(const char* sv_name, uid_t euid, res_payload* payload_buf);
+void sv_disable(const char* sv_name, uid_t euid, res_payload* payload_buf);
+void sv_start(const char* sv_name, uid_t euid, res_payload* payload_buf);
+void sv_stop(const char* sv_name, uid_t euid, res_payload* payload_buf);
+void sv_state(const char* sv_name, uid_t euid, res_payload* payload_buf);
 
-#endif
+#endif // _SV_H
